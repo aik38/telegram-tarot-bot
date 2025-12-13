@@ -12,6 +12,11 @@ pip install -r requirements.txt
 
 - Bot 起動: `python -m bot.main`
 - API 起動: `uvicorn api.main:app --reload --port 8000`
+
+### ログ出力
+
+- Bot 起動時に `logs/bot.log` に INFO 以上のログがローテーション付きで保存されます。
+- コンソールにも同じログが出力されるため、開発中はどちらでも確認できます。
 # akolasia_tarot_bot 起動メモ
 
 ## セットアップ
