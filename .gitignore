@@ -33,3 +33,4 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+run_bot.bat
