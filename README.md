@@ -8,6 +8,10 @@ Telegram向けタロット占いボットのミニマルな開発用セットア
 pip install -r requirements.txt
 ```
 
+### 主な環境変数
+
+- `SUPPORT_EMAIL`: 利用規約やサポート案内に表示するメールアドレス。未設定時は `hasegawaarisa1@gmail.com` が使われます。
+
 ## 開発環境での起動方法
 
 - Bot 起動: `python -m bot.main`

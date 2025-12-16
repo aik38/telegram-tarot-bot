@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import random
 from typing import Iterable
 
@@ -61,6 +62,8 @@ from core.tarot import (
 from core.tarot.spreads import Spread
 from core.store.catalog import Product, get_product, iter_products
 
+
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "hasegawaarisa1@gmail.com")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -320,7 +323,9 @@ async def ensure_general_chat_safety(
     return "落ち着いてお話ししましょう。あなたの気持ちを大切に受け止めます。"
 
 
+TERMS_CALLBACK_SHOW = "terms:show"
 TERMS_CALLBACK_AGREE = "terms:agree"
+TERMS_CALLBACK_AGREE_AND_BUY = "terms:agree_buy"
 
 TERMS_TEXT = (
     "利用規約（抜粋）\n"
@@ -328,13 +333,13 @@ TERMS_TEXT = (
     "・医療/法律/投資など専門判断は提供しません。\n"
     "・迷惑行為・違法行為への利用は禁止です。\n"
     "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
-    "・連絡先: support@example.com\n\n"
+    f"・連絡先: {SUPPORT_EMAIL}\n\n"
     "購入前に上記へ同意してください。"
 )
 
 SUPPORT_TEXT = (
     "お問い合わせ窓口です。\n"
-    "・購入者サポート: support@example.com\n"
+    f"・購入者サポート: {SUPPORT_EMAIL}\n"
     "・一般問い合わせ: Telegram @akolasia_support\n"
     "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
 )
@@ -343,16 +348,38 @@ PAY_SUPPORT_TEXT = (
     "決済トラブルの対応フローです。\n"
     "1) 次の情報をお知らせください：購入日時、SKU、telegram_payment_charge_id（分かれば）、スクショ\n"
     "2) 調査のうえ、必要に応じて返金します。\n"
-    "連絡先: support@example.com"
+    f"連絡先: {SUPPORT_EMAIL}"
 )
 
 TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意の上でお進みください。"
 
 
-def build_terms_keyboard() -> InlineKeyboardMarkup:
+def build_terms_keyboard(include_buy_option: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]
+    ]
+
+    if include_buy_option:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY
+                )
+            ]
+        )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_terms_prompt_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]
+            [InlineKeyboardButton(text="利用規約を確認", callback_data=TERMS_CALLBACK_SHOW)],
+            [
+                InlineKeyboardButton(
+                    text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY
+                )
+            ],
         ]
     )
 
@@ -370,6 +397,14 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def send_store_menu(message: Message) -> None:
+    await message.answer(
+        "ご利用ありがとうございます。ご希望の商品を選んでください。\n"
+        "Stars (XTR) 決済に対応しています。",
+        reply_markup=build_store_keyboard(),
+    )
+
+
 @dp.message(Command("terms"))
 async def cmd_terms(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
@@ -382,7 +417,18 @@ async def cmd_terms(message: Message) -> None:
         await message.answer("利用規約への同意を記録しました。/buy からご購入いただけます。")
         return
 
-    await message.answer(TERMS_TEXT, reply_markup=build_terms_keyboard())
+    await message.answer(
+        TERMS_TEXT, reply_markup=build_terms_keyboard(include_buy_option=True)
+    )
+
+
+@dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
+async def handle_terms_show(query: CallbackQuery):
+    await query.answer()
+    if query.message:
+        await query.message.answer(
+            TERMS_TEXT, reply_markup=build_terms_prompt_keyboard()
+        )
 
 
 @dp.callback_query(F.data == TERMS_CALLBACK_AGREE)
@@ -395,7 +441,23 @@ async def handle_terms_agree(query: CallbackQuery):
     set_terms_accepted(user_id)
     await query.answer("同意を記録しました。", show_alert=True)
     if query.message:
-        await query.message.answer("利用規約への同意を記録しました。/buy から購入手続きに進めます。")
+        await query.message.answer(
+            "利用規約への同意を記録しました。/buy から購入手続きに進めます。"
+        )
+
+
+@dp.callback_query(F.data == TERMS_CALLBACK_AGREE_AND_BUY)
+async def handle_terms_agree_and_buy(query: CallbackQuery):
+    user_id = query.from_user.id if query.from_user else None
+    if user_id is None:
+        await query.answer("ユーザー情報を確認できませんでした。", show_alert=True)
+        return
+
+    ensure_user(user_id)
+    set_terms_accepted(user_id)
+    await query.answer("同意を記録しました。", show_alert=True)
+    if query.message:
+        await send_store_menu(query.message)
 
 
 @dp.message(Command("support"))
@@ -416,15 +478,11 @@ async def cmd_buy(message: Message) -> None:
         if not has_accepted_terms(user_id):
             await message.answer(
                 f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
-                reply_markup=build_terms_keyboard(),
+                reply_markup=build_terms_prompt_keyboard(),
             )
             return
 
-    await message.answer(
-        "ご利用ありがとうございます。ご希望の商品を選んでください。\n"
-        "Stars (XTR) 決済に対応しています。",
-        reply_markup=build_store_keyboard(),
-    )
+    await send_store_menu(message)
 
 
 @dp.message(Command("status"))
@@ -481,7 +539,7 @@ async def handle_buy_callback(query: CallbackQuery):
         if query.message:
             await query.message.answer(
                 f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
-                reply_markup=build_terms_keyboard(),
+                reply_markup=build_terms_prompt_keyboard(),
             )
         return
     payload = json.dumps({"sku": product.sku, "user_id": user_id})

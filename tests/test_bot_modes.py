@@ -101,8 +101,22 @@ class DummyMessage:
         self.text = text
         self.from_user = DummyFromUser(user_id) if user_id is not None else None
         self.answers: list[str] = []
+        self.reply_markups: list[object] = []
         if successful_payment is not None:
             self.successful_payment = successful_payment
+
+    async def answer(self, text: str, **kwargs):
+        self.answers.append(text)
+        if "reply_markup" in kwargs:
+            self.reply_markups.append(kwargs["reply_markup"])
+
+
+class DummyCallback:
+    def __init__(self, data: str, user_id: int | None = None, message: DummyMessage | None = None):
+        self.data = data
+        self.from_user = DummyFromUser(user_id) if user_id is not None else None
+        self.message = message
+        self.answers: list[str] = []
 
     async def answer(self, text: str, **kwargs):
         self.answers.append(text)
@@ -175,6 +189,42 @@ def test_terms_required_before_buy(monkeypatch, tmp_path):
     asyncio.run(bot_main.cmd_buy(message))
 
     assert any("/terms" in ans or "同意" in ans for ans in message.answers)
+
+
+def test_terms_text_uses_support_email(monkeypatch):
+    bot_main = import_bot_main(monkeypatch)
+    assert "hasegawaarisa1@gmail.com" in bot_main.TERMS_TEXT
+    assert bot_main.SUPPORT_EMAIL == "hasegawaarisa1@gmail.com"
+
+
+def test_buy_shows_terms_prompt_keyboard(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    message = DummyMessage("/buy", user_id=123)
+
+    asyncio.run(bot_main.cmd_buy(message))
+
+    assert message.reply_markups
+    buttons = [btn.text for row in message.reply_markups[0].inline_keyboard for btn in row]
+    assert "利用規約を確認" in buttons
+    assert "同意して購入へ進む" in buttons
+
+
+def test_agree_and_buy_callback_opens_store(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    user_id = 321
+    message = DummyMessage("/buy", user_id=user_id)
+
+    asyncio.run(bot_main.cmd_buy(message))
+
+    callback = DummyCallback(
+        bot_main.TERMS_CALLBACK_AGREE_AND_BUY, user_id=user_id, message=message
+    )
+    asyncio.run(bot_main.handle_terms_agree_and_buy(callback))
+
+    user = bot_main.get_user(user_id)
+    assert bot_main.has_accepted_terms(user_id)
+    assert user is not None
+    assert any("ご希望の商品" in ans for ans in message.answers)
 
 
 def test_successful_payment_not_double_granted(monkeypatch, tmp_path):
