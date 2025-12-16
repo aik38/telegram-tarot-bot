@@ -18,7 +18,7 @@ def _get_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_premium_ids(value: str | None) -> Set[int]:
+def _parse_int_set(value: str | None) -> Set[int]:
     if not value:
         return set()
 
@@ -35,7 +35,8 @@ def _parse_premium_ids(value: str | None) -> Set[int]:
 
 
 PAYWALL_ENABLED: bool = _get_bool("PAYWALL_ENABLED", default=False)
-PREMIUM_USER_IDS: set[int] = _parse_premium_ids(os.getenv("PREMIUM_USER_IDS"))
+PREMIUM_USER_IDS: set[int] = _parse_int_set(os.getenv("PREMIUM_USER_IDS"))
+ADMIN_USER_IDS: set[int] = _parse_int_set(os.getenv("ADMIN_USER_IDS"))
 
 
 def is_premium_user(user_id: int | None, *, now: datetime | None = None) -> bool:
@@ -56,6 +57,7 @@ def get_user_with_default(user_id: int | None):
 
 
 __all__ = [
+    "ADMIN_USER_IDS",
     "PAYWALL_ENABLED",
     "PREMIUM_USER_IDS",
     "get_user_with_default",

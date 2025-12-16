@@ -31,11 +31,20 @@ from core.db import (
     UserRecord,
     consume_ticket,
     ensure_user,
+    get_payment_by_charge_id,
     get_user,
     grant_purchase,
+    has_accepted_terms,
     log_payment,
+    mark_payment_refunded,
+    set_terms_accepted,
 )
-from core.monetization import PAYWALL_ENABLED, get_user_with_default, is_premium_user
+from core.monetization import (
+    ADMIN_USER_IDS,
+    PAYWALL_ENABLED,
+    get_user_with_default,
+    is_premium_user,
+)
 from core.logging import setup_logging
 from core.prompts import CHAT_SYSTEM_PROMPT, TAROT_OUTPUT_RULES, TAROT_SYSTEM_PROMPT
 from core.tarot import (
@@ -137,7 +146,9 @@ def _preview_text(text: str, limit: int = 80) -> str:
 
 COMMAND_SPREAD_MAP: dict[str, Spread] = {
     "/love1": ONE_CARD,
+    "/read1": ONE_CARD,
     "/love3": THREE_CARD_SITUATION,
+    "/read3": THREE_CARD_SITUATION,
     "/hexa": HEXAGRAM,
     "/celtic": CELTIC_CROSS,
 }
@@ -180,10 +191,14 @@ def is_paid_spread(spread: Spread) -> bool:
     return spread.id in PAID_SPREAD_IDS
 
 
+def is_admin_user(user_id: int | None) -> bool:
+    return user_id is not None and user_id in ADMIN_USER_IDS
+
+
 def build_paid_hint(text: str) -> str | None:
     hints = ["3枚", "３枚", "三枚", "3card", "3 カード", "ヘキサ", "ケルト", "十字", "7枚", "７枚", "10枚", "１０枚"]
     if any(hint in text for hint in hints):
-        return "3枚以上のスプレッドはコマンド指定で受け付けています：/love3 /hexa /celtic（無料は1枚引きです：/love1）。"
+        return "複数枚はコマンド指定です：/read3 /hexa /celtic（無料は『占って』で1枚）"
     return None
 
 
@@ -305,6 +320,43 @@ async def ensure_general_chat_safety(
     return "落ち着いてお話ししましょう。あなたの気持ちを大切に受け止めます。"
 
 
+TERMS_CALLBACK_AGREE = "terms:agree"
+
+TERMS_TEXT = (
+    "利用規約（抜粋）\n"
+    "・18歳以上の自己責任で利用してください。\n"
+    "・医療/法律/投資など専門判断は提供しません。\n"
+    "・迷惑行為・違法行為への利用は禁止です。\n"
+    "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
+    "・連絡先: support@example.com\n\n"
+    "購入前に上記へ同意してください。"
+)
+
+SUPPORT_TEXT = (
+    "お問い合わせ窓口です。\n"
+    "・購入者サポート: support@example.com\n"
+    "・一般問い合わせ: Telegram @akolasia_support\n"
+    "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
+)
+
+PAY_SUPPORT_TEXT = (
+    "決済トラブルの対応フローです。\n"
+    "1) 次の情報をお知らせください：購入日時、SKU、telegram_payment_charge_id（分かれば）、スクショ\n"
+    "2) 調査のうえ、必要に応じて返金します。\n"
+    "連絡先: support@example.com"
+)
+
+TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意の上でお進みください。"
+
+
+def build_terms_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]
+        ]
+    )
+
+
 def build_store_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for product in iter_products():
@@ -318,11 +370,55 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@dp.message(Command("terms"))
+async def cmd_terms(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is not None:
+        ensure_user(user_id)
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1 and parts[1].strip().lower() == "agree" and user_id is not None:
+        set_terms_accepted(user_id)
+        await message.answer("利用規約への同意を記録しました。/buy からご購入いただけます。")
+        return
+
+    await message.answer(TERMS_TEXT, reply_markup=build_terms_keyboard())
+
+
+@dp.callback_query(F.data == TERMS_CALLBACK_AGREE)
+async def handle_terms_agree(query: CallbackQuery):
+    user_id = query.from_user.id if query.from_user else None
+    if user_id is None:
+        await query.answer("ユーザー情報を確認できませんでした。", show_alert=True)
+        return
+
+    set_terms_accepted(user_id)
+    await query.answer("同意を記録しました。", show_alert=True)
+    if query.message:
+        await query.message.answer("利用規約への同意を記録しました。/buy から購入手続きに進めます。")
+
+
+@dp.message(Command("support"))
+async def cmd_support(message: Message) -> None:
+    await message.answer(SUPPORT_TEXT)
+
+
+@dp.message(Command("paysupport"))
+async def cmd_pay_support(message: Message) -> None:
+    await message.answer(PAY_SUPPORT_TEXT)
+
+
 @dp.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     if user_id is not None:
         ensure_user(user_id)
+        if not has_accepted_terms(user_id):
+            await message.answer(
+                f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
+                reply_markup=build_terms_keyboard(),
+            )
+            return
 
     await message.answer(
         "ご利用ありがとうございます。ご希望の商品を選んでください。\n"
@@ -346,26 +442,19 @@ async def cmd_status(message: Message) -> None:
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "こんにちは、AIタロット占いボットの akolasia_tarot_bot です🌿\n"
-        "ゆったりと心を整えながら、気になることをお話しくださいね。\n\n"
-        "◆ 相談できるメニュー\n"
-        "・恋愛運の占い（片思い、結婚のタイミングなど）\n"
-        "・仕事や転職の占い（職場の人間関係も歓迎）\n"
-        "・金運やお金にまつわる相談\n"
-        "・今日 / 明日の運勢や全体運\n"
-        "・テーマがまとまっていなくても、感じていることをそのまま話してOKです\n\n"
-        "◆ 使い方の例\n"
-        "・『今の恋愛はこの先どうなりますか？』\n"
-        "・『明日の恋人の機嫌はどうかな？』\n"
-        "・『転職した方が良いか迷っています』\n"
-        "・『最近、何となく気持ちが落ち着きません』\n"
-        "・『占って』とメッセージに入れるとタロット占いモードになります（1枚引き）\n"
-        "・複数枚スプレッドはコマンドで指定してください：/love3 /hexa /celtic（無料は /love1）\n"
-        "・それ以外のメッセージには、いつもの雑談や相談相手としてお話しします\n\n"
-        "◆ やさしいお願い\n"
-        "医療・法律・投資の判断は専門家に相談してください。\n"
-        "占いは心の整理と気づきのヒントで、結果を保証するものではありません。\n"
-        "不安が強いときは無理に信じすぎず、自分を大切にしてくださいね。",
+        "こんにちは、AIタロット占いボット akolasia_tarot_bot です🌿\n"
+        "恋愛・仕事・お金・気分のモヤモヤまで、気軽に話してください。\n\n"
+        "【占いの始め方】\n"
+        "・『占って』→ 1枚引き（無料）\n"
+        "・複数枚はコマンドで指定：/read3 /hexa /celtic\n\n"
+        "【購入・確認】\n"
+        "・/buy：有料メニュー購入（Stars）\n"
+        "・/status：利用状況の確認\n\n"
+        "【大事な案内】\n"
+        "・/terms：利用規約\n"
+        "・/support：お問い合わせ\n"
+        "・/paysupport：決済トラブル\n\n"
+        "医療・法律・投資は専門家へ。占いは心の整理のヒントで、結果を保証するものではありません。",
     )
 
 
@@ -384,6 +473,14 @@ async def handle_buy_callback(query: CallbackQuery):
         return
 
     ensure_user(user_id)
+    if not has_accepted_terms(user_id):
+        await query.answer(TERMS_PROMPT_BEFORE_BUY, show_alert=True)
+        if query.message:
+            await query.message.answer(
+                f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
+                reply_markup=build_terms_keyboard(),
+            )
+        return
     payload = json.dumps({"sku": product.sku, "user_id": user_id})
     prices = [LabeledPrice(label=product.title, amount=product.price_stars)]
 
@@ -430,18 +527,62 @@ async def process_successful_payment(message: Message):
         return
 
     ensure_user(user_id)
-    log_payment(
+    payment_record, created = log_payment(
         user_id=user_id,
         sku=product.sku,
         stars=payment.total_amount,
         telegram_payment_charge_id=payment.telegram_payment_charge_id,
         provider_payment_charge_id=payment.provider_payment_charge_id,
     )
+    if not created:
+        await message.answer(
+            "このお支払いはすでに処理済みです。/status から利用状況をご確認ください。"
+        )
+        return
     updated_user = grant_purchase(user_id, product.sku)
     unlock_message = build_unlock_text(product, updated_user)
     await message.answer(
         f"{product.title}のご購入ありがとうございました！\n{unlock_message}\n"
         "いつでも /status でご利用状況を確認いただけます。"
+    )
+
+
+@dp.message(Command("refund"))
+async def cmd_refund(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if not is_admin_user(user_id):
+        await message.answer("このコマンドは管理者専用です。")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer("使い方: /refund <telegram_payment_charge_id>")
+        return
+
+    charge_id = parts[1].strip()
+    payment = get_payment_by_charge_id(charge_id)
+    if not payment:
+        await message.answer("指定の決済が見つかりませんでした。IDをご確認ください。")
+        return
+
+    try:
+        await bot.refund_star_payment(
+            user_id=payment.user_id,
+            telegram_payment_charge_id=charge_id,
+        )
+    except Exception:
+        logger.exception("Failed to refund payment %s", charge_id)
+        await message.answer("返金処理に失敗しました。ログを確認してください。")
+        return
+
+    updated = mark_payment_refunded(charge_id)
+    status_line = f"status={updated.status}" if updated else "status=refunded"
+    await message.answer(
+        "返金処理が完了しました。\n"
+        f"ユーザーID: {payment.user_id}\n"
+        f"SKU: {payment.sku}\n"
+        f"決済ID: {charge_id}\n"
+        f"{status_line}"
     )
 
 
@@ -573,7 +714,7 @@ async def handle_message(message: Message) -> None:
                 if user_id is None or not consume_ticket_for_spread(user_id, spread_from_command):
                     await message.answer(
                         "こちらは有料メニューです。\n"
-                        "ご購入は /buy からお進みいただけます（無料の1枚引きは /love1 でお楽しみください）。"
+                        "ご購入は /buy からお進みいただけます（無料の1枚引きは /read1 または『占って』でお楽しみください）。"
                     )
                     return
 

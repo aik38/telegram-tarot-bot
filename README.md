@@ -28,9 +28,26 @@ pip install -r requirements.txt
 
 - `/buy` で Stars (XTR) の商品一覧を表示します。ボタンから決済フローに進みます。
 - `/status` でパスの有効期限やチケット残数を確認できます。
-- `PAYWALL_ENABLED=true` のとき `/love3` `/hexa` `/celtic` は有料メニュー扱いになります。
+- `PAYWALL_ENABLED=true` のとき `/read3` `/hexa` `/celtic` は有料メニュー扱いになります（`/love3` は互換エイリアス）。
   - 有効なパス（premium_until が現在より未来）または対応するチケット残高があれば利用可能です。
   - パスが無効でチケットもない場合は実行せず `/buy` を案内します。
+
+### BotFather 推奨コマンド
+
+`/setcommands` で登録しておく推奨リストです。
+
+```
+start - ボットの案内
+buy - 有料メニュー購入
+status - 利用状況の確認
+terms - 利用規約の表示と同意
+support - お問い合わせ窓口
+paysupport - 決済トラブル対応窓口
+read1 - 1枚引き
+read3 - 3枚引き
+hexa - ヘキサグラム（7枚）
+celtic - ケルト十字（10枚）
+```
 
 ## タロットロジックの内部構造
 

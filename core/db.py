@@ -21,6 +21,21 @@ class UserRecord:
     tickets_7: int
     tickets_10: int
     images_enabled: bool
+    terms_accepted_at: datetime | None
+
+
+@dataclass
+class PaymentRecord:
+    id: int
+    user_id: int
+    sku: str
+    stars: int
+    telegram_payment_charge_id: str | None
+    provider_payment_charge_id: str | None
+    status: str
+    refund_id: str | None
+    created_at: datetime
+    refunded_at: datetime | None
 
 
 TicketColumn = Literal["tickets_3", "tickets_7", "tickets_10"]
@@ -39,6 +54,11 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row[1] == column for row in rows)
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -50,7 +70,8 @@ def init_db() -> None:
                 tickets_3 INT,
                 tickets_7 INT,
                 tickets_10 INT,
-                images_enabled INT
+                images_enabled INT,
+                terms_accepted_at TEXT
             )
             """
         )
@@ -63,8 +84,32 @@ def init_db() -> None:
                 stars INT,
                 telegram_payment_charge_id TEXT,
                 provider_payment_charge_id TEXT,
-                created_at TEXT
+                status TEXT,
+                refund_id TEXT,
+                created_at TEXT,
+                refunded_at TEXT
             )
+            """
+        )
+
+        if not _column_exists(conn, "users", "terms_accepted_at"):
+            conn.execute("ALTER TABLE users ADD COLUMN terms_accepted_at TEXT")
+
+        if not _column_exists(conn, "payments", "status"):
+            conn.execute("ALTER TABLE payments ADD COLUMN status TEXT")
+        if not _column_exists(conn, "payments", "refund_id"):
+            conn.execute("ALTER TABLE payments ADD COLUMN refund_id TEXT")
+        if not _column_exists(conn, "payments", "refunded_at"):
+            conn.execute("ALTER TABLE payments ADD COLUMN refunded_at TEXT")
+        if not _column_exists(conn, "payments", "telegram_payment_charge_id"):
+            conn.execute(
+                "ALTER TABLE payments ADD COLUMN telegram_payment_charge_id TEXT"
+            )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_telegram_charge_id
+            ON payments(telegram_payment_charge_id)
+            WHERE telegram_payment_charge_id IS NOT NULL
             """
         )
 
@@ -78,8 +123,8 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
 
         conn.execute(
             """
-            INSERT INTO users (user_id, created_at, premium_until, tickets_3, tickets_7, tickets_10, images_enabled)
-            VALUES (?, ?, NULL, 0, 0, 0, 0)
+            INSERT INTO users (user_id, created_at, premium_until, tickets_3, tickets_7, tickets_10, images_enabled, terms_accepted_at)
+            VALUES (?, ?, NULL, 0, 0, 0, 0, NULL)
             """,
             (user_id, now.isoformat()),
         )
@@ -91,6 +136,7 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
             tickets_7=0,
             tickets_10=0,
             images_enabled=False,
+            terms_accepted_at=None,
         )
 
 
@@ -110,22 +156,79 @@ def log_payment(
     telegram_payment_charge_id: str | None,
     provider_payment_charge_id: str | None,
     now: datetime | None = None,
-) -> None:
+) -> tuple[PaymentRecord, bool]:
+    now = now or datetime.now(timezone.utc)
+    with _connect() as conn:
+        if telegram_payment_charge_id:
+            existing = conn.execute(
+                "SELECT * FROM payments WHERE telegram_payment_charge_id = ?",
+                (telegram_payment_charge_id,),
+            ).fetchone()
+            if existing:
+                return _row_to_payment(existing), False
+
+        conn.execute(
+            """
+            INSERT INTO payments (
+                user_id, sku, stars, telegram_payment_charge_id, provider_payment_charge_id, status, refund_id, created_at, refunded_at
+            ) VALUES (?, ?, ?, ?, ?, 'paid', NULL, ?, NULL)
+            """,
+            (
+                user_id,
+                sku,
+                stars,
+                telegram_payment_charge_id,
+                provider_payment_charge_id,
+                now.isoformat(),
+            ),
+        )
+        new_row = conn.execute(
+            "SELECT * FROM payments WHERE telegram_payment_charge_id IS ? ORDER BY id DESC LIMIT 1",
+            (telegram_payment_charge_id,),
+        ).fetchone()
+        return _row_to_payment(new_row), True
+
+
+def get_payment_by_charge_id(telegram_payment_charge_id: str) -> PaymentRecord | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM payments WHERE telegram_payment_charge_id = ?",
+            (telegram_payment_charge_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _row_to_payment(row)
+
+
+def mark_payment_refunded(
+    telegram_payment_charge_id: str, *, refund_id: str | None = None, now: datetime | None = None
+) -> PaymentRecord | None:
     now = now or datetime.now(timezone.utc)
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO payments (
-                user_id, sku, stars, telegram_payment_charge_id, provider_payment_charge_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            UPDATE payments
+            SET status = 'refunded', refund_id = COALESCE(?, refund_id), refunded_at = ?
+            WHERE telegram_payment_charge_id = ?
             """,
-            (user_id, sku, stars, telegram_payment_charge_id, provider_payment_charge_id, now.isoformat()),
+            (refund_id, now.isoformat(), telegram_payment_charge_id),
         )
+        row = conn.execute(
+            "SELECT * FROM payments WHERE telegram_payment_charge_id = ?",
+            (telegram_payment_charge_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _row_to_payment(row)
 
 
 def _row_to_user(row: sqlite3.Row) -> UserRecord:
     premium_until = row["premium_until"]
     premium_dt = datetime.fromisoformat(premium_until) if premium_until else None
+    terms_accepted_raw = row["terms_accepted_at"]
+    terms_accepted_dt = (
+        datetime.fromisoformat(terms_accepted_raw) if terms_accepted_raw else None
+    )
     return UserRecord(
         user_id=row["user_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
@@ -134,6 +237,26 @@ def _row_to_user(row: sqlite3.Row) -> UserRecord:
         tickets_7=row["tickets_7"],
         tickets_10=row["tickets_10"],
         images_enabled=bool(row["images_enabled"]),
+        terms_accepted_at=terms_accepted_dt,
+    )
+
+
+def _row_to_payment(row: sqlite3.Row) -> PaymentRecord:
+    return PaymentRecord(
+        id=row["id"],
+        user_id=row["user_id"],
+        sku=row["sku"],
+        stars=row["stars"],
+        telegram_payment_charge_id=row["telegram_payment_charge_id"],
+        provider_payment_charge_id=row["provider_payment_charge_id"],
+        status=row["status"] if row["status"] else "paid",
+        refund_id=row["refund_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        refunded_at=(
+            datetime.fromisoformat(row["refunded_at"])
+            if row["refunded_at"]
+            else None
+        ),
     )
 
 
@@ -203,6 +326,22 @@ def consume_ticket(user_id: int, *, ticket: TicketColumn) -> bool:
     return True
 
 
+def has_accepted_terms(user_id: int) -> bool:
+    user = get_user(user_id)
+    return bool(user and user.terms_accepted_at)
+
+
+def set_terms_accepted(user_id: int, *, now: datetime | None = None) -> UserRecord:
+    now = now or datetime.now(timezone.utc)
+    ensure_user(user_id, now=now)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET terms_accepted_at = ? WHERE user_id = ?",
+            (now.isoformat(), user_id),
+        )
+    return get_user(user_id)  # type: ignore[return-value]
+
+
 def has_active_pass(user_id: int, *, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     user = get_user(user_id)
@@ -215,13 +354,18 @@ init_db()
 
 __all__ = [
     "DB_PATH",
+    "PaymentRecord",
     "UserRecord",
     "TicketColumn",
     "consume_ticket",
     "ensure_user",
     "get_user",
+    "get_payment_by_charge_id",
     "grant_purchase",
     "has_active_pass",
+    "has_accepted_terms",
     "init_db",
     "log_payment",
+    "mark_payment_refunded",
+    "set_terms_accepted",
 ]
