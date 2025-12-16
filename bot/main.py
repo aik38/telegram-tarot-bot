@@ -20,11 +20,15 @@ from openai import (
 
 from core.config import OPENAI_API_KEY, TELEGRAM_BOT_TOKEN
 from core.logging import setup_logging
+from core.prompts import CHAT_SYSTEM_PROMPT, TAROT_OUTPUT_RULES, TAROT_SYSTEM_PROMPT
 from core.tarot import (
     ONE_CARD,
     THREE_CARD_SITUATION,
+    contains_tarot_like,
     draw_cards,
+    is_tarot_request,
     orientation_label,
+    strip_tarot_sentences,
 )
 from core.tarot.spreads import Spread
 
@@ -38,17 +42,8 @@ logger = logging.getLogger(__name__)
 
 def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
     """通常チャットモードの system prompt を組み立てる。"""
-    system_prompt = (
-        "あなたは日本語で会話する優しいチャットパートナーです。"
-        "次の禁止事項を必ず守ってください:\n"
-        "- 通常チャットモードでは、タロットカードを引いたふりをしてはいけません。\n"
-        "- 『カード』『タロット』『スプレッド』『大アルカナ』『小アルカナ』などの占い用語を使わないでください。\n"
-        "- 占いのような断定的未来予測は避け、相談者の気持ちを受け止めるカウンセリング寄りの返答にしてください。\n"
-        "- 返信は300〜600文字程度を目安に、落ち着いて丁寧なトーンを保ってください。\n"
-        "- 重たい相談にも寄り添い、相手を責めずに安心できる表現を選んでください。"
-    )
     return [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "user", "content": user_query},
     ]
 
@@ -120,11 +115,6 @@ def _preview_text(text: str, limit: int = 80) -> str:
     return text[:limit] + "..."
 
 
-def is_tarot_mode(text: str) -> bool:
-    lowered = text.lower()
-    return "占って" in text or lowered.startswith("/tarot")
-
-
 def choose_spread(user_query: str) -> Spread:
     hints = ["3枚", "３枚", "三枚", "3card", "3 カード"]
     if any(hint in user_query for hint in hints):
@@ -135,13 +125,8 @@ def choose_spread(user_query: str) -> Spread:
 def build_tarot_messages(
     *, spread: Spread, user_query: str, drawn_cards: list[dict[str, str]]
 ) -> list[dict[str, str]]:
-    tarot_system_prompt = (
-        "あなたは日本語で回答するタロット占い師です。"
-        "以下のカード情報を必ず先に列挙し、各ポジション名とカード名・正逆を明示してから解釈を述べてください。\n"
-        "- 与えられたカード以外を勝手に作らないこと。\n"
-        "- 必ず『引いたカードは次の通りです』のような導入を入れ、ポジション順にカード名と正位置/逆位置を示すこと。\n"
-        "- その後で質問内容に沿って、カードのキーワードを活かしながら優しく解釈してください。"
-    )
+    rules_text = "\n".join(f"- {rule}" for rule in TAROT_OUTPUT_RULES)
+    tarot_system_prompt = f"{TAROT_SYSTEM_PROMPT}\n出力ルール:\n{rules_text}"
 
     tarot_payload = {
         "spread_id": spread.id,
@@ -155,6 +140,65 @@ def build_tarot_messages(
         {"role": "assistant", "content": json.dumps(tarot_payload, ensure_ascii=False, indent=2)},
         {"role": "user", "content": user_query},
     ]
+
+
+def format_drawn_card_heading(drawn_cards: list[dict[str, str]]) -> str:
+    if not drawn_cards:
+        return "引いたカードをお知らせできませんでした。"
+
+    if len(drawn_cards) == 1:
+        card = drawn_cards[0]["card"]
+        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
+        return f"引いたカードは「{card_label}」です。"
+
+    lines = ["引いたカード："]
+    for index, item in enumerate(drawn_cards, start=1):
+        card = item["card"]
+        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
+        lines.append(f"{index}. {card_label} - {item['label_ja']}")
+    return "\n".join(lines)
+
+
+def ensure_tarot_response_prefixed(answer: str, heading: str) -> str:
+    if answer.lstrip().startswith("引いたカード"):
+        return answer
+    return f"{heading}\n{answer}" if heading else answer
+
+
+async def rewrite_chat_response(original: str) -> tuple[str, bool]:
+    rewrite_prompt = (
+        "次の文章から、タロット・カード・占いに関する言及をすべて取り除いて日本語で書き直してください。"
+        "丁寧で落ち着いた敬語を維持し、相談の意図や励ましは残してください。"
+    )
+
+    messages = [
+        {"role": "system", "content": rewrite_prompt},
+        {"role": "user", "content": original},
+    ]
+
+    return await call_openai_with_retry(messages)
+
+
+async def ensure_general_chat_safety(
+    answer: str, *, rewrite_func=rewrite_chat_response
+) -> str:
+    if not contains_tarot_like(answer):
+        return answer
+
+    try:
+        rewritten, fatal = await rewrite_func(answer)
+    except Exception:
+        logger.exception("Unexpected error during chat rewrite")
+        rewritten, fatal = "", False
+
+    if rewritten and not fatal and not contains_tarot_like(rewritten):
+        return rewritten
+
+    cleaned = strip_tarot_sentences(rewritten or answer)
+    if cleaned:
+        return cleaned
+
+    return "落ち着いてお話ししましょう。あなたの気持ちを大切に受け止めます。"
 
 
 @dp.message(CommandStart())
@@ -221,6 +265,7 @@ async def handle_tarot_reading(message: Message, user_query: str) -> None:
             }
         )
 
+    heading = format_drawn_card_heading(drawn_payload)
     messages = build_tarot_messages(
         spread=spread,
         user_query=user_query,
@@ -244,7 +289,8 @@ async def handle_tarot_reading(message: Message, user_query: str) -> None:
         )
         return
 
-    await message.answer(answer)
+    safe_answer = ensure_tarot_response_prefixed(answer, heading)
+    await message.answer(safe_answer)
 
 
 async def handle_general_chat(message: Message, user_query: str) -> None:
@@ -265,7 +311,8 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
             )
             return
-        await message.answer(answer)
+        safe_answer = await ensure_general_chat_safety(answer)
+        await message.answer(safe_answer)
     except Exception:
         logger.exception("Unexpected error during general chat")
         await message.answer(
@@ -287,7 +334,7 @@ async def handle_message(message: Message) -> None:
         )
         return
 
-    if is_tarot_mode(text):
+    if is_tarot_request(text):
         await handle_tarot_reading(message, user_query=text)
     else:
         await handle_general_chat(message, user_query=text)
