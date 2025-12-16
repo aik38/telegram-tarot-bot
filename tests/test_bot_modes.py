@@ -101,4 +101,4 @@ def test_paywall_blocks_paid_spread(monkeypatch):
     asyncio.run(bot_main.handle_message(message))
 
     assert message.answers
-    assert "有料会員向け" in message.answers[0]
+    assert "/buy" in message.answers[0]

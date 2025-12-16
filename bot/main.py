@@ -4,9 +4,16 @@ import logging
 import random
 from typing import Iterable
 
-from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
+    CallbackQuery,
+)
 from openai import (
     APIConnectionError,
     APIError,
@@ -19,7 +26,16 @@ from openai import (
 )
 
 from core.config import OPENAI_API_KEY, TELEGRAM_BOT_TOKEN
-from core.monetization import PAYWALL_ENABLED, is_premium_user
+from core.db import (
+    TicketColumn,
+    UserRecord,
+    consume_ticket,
+    ensure_user,
+    get_user,
+    grant_purchase,
+    log_payment,
+)
+from core.monetization import PAYWALL_ENABLED, get_user_with_default, is_premium_user
 from core.logging import setup_logging
 from core.prompts import CHAT_SYSTEM_PROMPT, TAROT_OUTPUT_RULES, TAROT_SYSTEM_PROMPT
 from core.tarot import (
@@ -34,6 +50,7 @@ from core.tarot import (
     strip_tarot_sentences,
 )
 from core.tarot.spreads import Spread
+from core.store.catalog import Product, get_product, iter_products
 
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -128,6 +145,18 @@ COMMAND_SPREAD_MAP: dict[str, Spread] = {
 
 PAID_SPREAD_IDS: set[str] = {THREE_CARD_SITUATION.id, HEXAGRAM.id, CELTIC_CROSS.id}
 
+SPREAD_TICKET_COLUMNS: dict[str, TicketColumn] = {
+    THREE_CARD_SITUATION.id: "tickets_3",
+    HEXAGRAM.id: "tickets_7",
+    CELTIC_CROSS.id: "tickets_10",
+}
+
+TICKET_SKU_TO_COLUMN: dict[str, TicketColumn] = {
+    "TICKET_3": "tickets_3",
+    "TICKET_7": "tickets_7",
+    "TICKET_10": "tickets_10",
+}
+
 
 def choose_spread(_: str) -> Spread:
     return ONE_CARD
@@ -156,6 +185,45 @@ def build_paid_hint(text: str) -> str | None:
     if any(hint in text for hint in hints):
         return "3枚以上のスプレッドはコマンド指定で受け付けています：/love3 /hexa /celtic（無料は1枚引きです：/love1）。"
     return None
+
+
+def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
+    column = SPREAD_TICKET_COLUMNS.get(spread.id)
+    if not column:
+        return False
+    return consume_ticket(user_id, ticket=column)
+
+
+def format_status(user: UserRecord) -> str:
+    premium_until = user.premium_until.isoformat(sep=" ") if user.premium_until else "なし"
+    return (
+        "現在のご利用状況です。\n"
+        f"・有効期限つきパス: {premium_until}\n"
+        f"・3枚チケット: {user.tickets_3}枚\n"
+        f"・7枚チケット: {user.tickets_7}枚\n"
+        f"・10枚チケット: {user.tickets_10}枚\n"
+        f"・画像オプション: {'有効' if user.images_enabled else '無効'}"
+    )
+
+
+def build_unlock_text(product: Product, user: UserRecord) -> str:
+    if product.sku in TICKET_SKU_TO_COLUMN:
+        column = TICKET_SKU_TO_COLUMN[product.sku]
+        balance = getattr(user, column)
+        return f"{product.title}を追加しました。現在の残り枚数は {balance} 枚です。"
+
+    if product.sku.startswith("PASS_"):
+        until = user.premium_until.isoformat(sep=" ") if user.premium_until else "有効期限を更新しました。"
+        duration = "7日間" if product.sku == "PASS_7D" else "30日間"
+        return (
+            f"{duration}のパスをご利用いただけます。\n"
+            f"現在の有効期限: {until}"
+        )
+
+    if product.sku == "ADDON_IMAGES":
+        return "画像付きのオプションを有効化しました。これからの占いにやさしい彩りを添えますね。"
+
+    return "ご購入ありがとうございます。必要に応じてサポートまでお知らせください。"
 
 
 def build_tarot_messages(
@@ -237,6 +305,44 @@ async def ensure_general_chat_safety(
     return "落ち着いてお話ししましょう。あなたの気持ちを大切に受け止めます。"
 
 
+def build_store_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for product in iter_products():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{product.title} - {product.price_stars}⭐️", callback_data=f"buy:{product.sku}"
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(Command("buy"))
+async def cmd_buy(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is not None:
+        ensure_user(user_id)
+
+    await message.answer(
+        "ご利用ありがとうございます。ご希望の商品を選んでください。\n"
+        "Stars (XTR) 決済に対応しています。",
+        reply_markup=build_store_keyboard(),
+    )
+
+
+@dp.message(Command("status"))
+async def cmd_status(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        await message.answer("ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。")
+        return
+
+    user = get_user_with_default(user_id) or ensure_user(user_id)
+    status = format_status(user)
+    await message.answer(status)
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
@@ -260,6 +366,82 @@ async def cmd_start(message: Message) -> None:
         "医療・法律・投資の判断は専門家に相談してください。\n"
         "占いは心の整理と気づきのヒントで、結果を保証するものではありません。\n"
         "不安が強いときは無理に信じすぎず、自分を大切にしてくださいね。",
+    )
+
+
+@dp.callback_query(F.data.startswith("buy:"))
+async def handle_buy_callback(query: CallbackQuery):
+    data = query.data or ""
+    sku = data.split(":", maxsplit=1)[1] if ":" in data else None
+    product = get_product(sku) if sku else None
+    if not product:
+        await query.answer("商品情報を取得できませんでした。少し時間をおいてお試しください。", show_alert=True)
+        return
+
+    user_id = query.from_user.id if query.from_user else None
+    if user_id is None:
+        await query.answer("ユーザーを特定できませんでした。個別チャットからお試しください。", show_alert=True)
+        return
+
+    ensure_user(user_id)
+    payload = json.dumps({"sku": product.sku, "user_id": user_id})
+    prices = [LabeledPrice(label=product.title, amount=product.price_stars)]
+
+    if query.message:
+        await query.message.answer_invoice(
+            title=product.title,
+            description=product.description,
+            payload=payload,
+            provider_token="",
+            currency="XTR",
+            prices=prices,
+        )
+    await query.answer("お支払い画面を開きます。ゆっくり進めてくださいね。")
+
+
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+    payment = message.successful_payment
+    payload_data: dict[str, object]
+    try:
+        payload_data = json.loads(payment.invoice_payload)
+    except json.JSONDecodeError:
+        payload_data = {}
+
+    sku = payload_data.get("sku") if isinstance(payload_data, dict) else None
+    user_id_payload = payload_data.get("user_id") if isinstance(payload_data, dict) else None
+    product = get_product(str(sku)) if sku else None
+    user_id = (
+        int(user_id_payload)
+        if isinstance(user_id_payload, (str, int))
+        else (message.from_user.id if message.from_user else None)
+    )
+
+    if not product or user_id is None:
+        await message.answer(
+            "お支払いは完了しましたが、購入情報の確認に少し時間がかかっています。\n"
+            "お手数ですがサポートまでお問い合わせください。"
+        )
+        return
+
+    ensure_user(user_id)
+    log_payment(
+        user_id=user_id,
+        sku=product.sku,
+        stars=payment.total_amount,
+        telegram_payment_charge_id=payment.telegram_payment_charge_id,
+        provider_payment_charge_id=payment.provider_payment_charge_id,
+    )
+    updated_user = grant_purchase(user_id, product.sku)
+    unlock_message = build_unlock_text(product, updated_user)
+    await message.answer(
+        f"{product.title}のご購入ありがとうございました！\n{unlock_message}\n"
+        "いつでも /status でご利用状況を確認いただけます。"
     )
 
 
@@ -383,11 +565,17 @@ async def handle_message(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
 
     if spread_from_command:
-        if PAYWALL_ENABLED and is_paid_spread(spread_from_command) and not is_premium_user(user_id):
-            await message.answer(
-                "こちらは有料会員向けメニューです。アップグレード方法は準備中です（今は無料の1枚引きなら可能です：/love1）。"
-            )
-            return
+        if user_id is not None:
+            ensure_user(user_id)
+
+        if PAYWALL_ENABLED and is_paid_spread(spread_from_command):
+            if not is_premium_user(user_id):
+                if user_id is None or not consume_ticket_for_spread(user_id, spread_from_command):
+                    await message.answer(
+                        "こちらは有料メニューです。\n"
+                        "ご購入は /buy からお進みいただけます（無料の1枚引きは /love1 でお楽しみください）。"
+                    )
+                    return
 
         user_query = cleaned or "恋愛について占ってください。"
         await handle_tarot_reading(

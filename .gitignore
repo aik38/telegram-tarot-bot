@@ -21,6 +21,9 @@ dist/
 # Logs
 *.log
 
+# SQLite (local runtime)
+db/*.db
+
 # Test / coverage cache
 .pytest_cache/
 .coverage
