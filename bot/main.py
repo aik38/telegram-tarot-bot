@@ -3,7 +3,7 @@ import logging
 import random
 from typing import Tuple
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from openai import (
@@ -95,7 +95,7 @@ async def call_openai_with_retry(user_text: str, category: str) -> Tuple[str, bo
             logger.exception("Fatal OpenAI error: %s", exc)
             return (
                 "システム側の設定で問題が起きています。"
-                "少し時間をおいて、もう一度試してもらえますか？", 
+                "少し時間をおいて、もう一度試してもらえますか？",
                 True,
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
@@ -137,6 +137,12 @@ async def call_openai_with_retry(user_text: str, category: str) -> Tuple[str, bo
     )
 
 
+def _preview_text(text: str, limit: int = 80) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
@@ -152,27 +158,30 @@ async def cmd_start(message: Message) -> None:
         "・『今の恋愛はこの先どうなりますか？』\n"
         "・『明日の恋人の機嫌はどうかな？』\n"
         "・『転職した方が良いか迷っています』\n"
-        "・『最近、何となく気持ちが落ち着きません』\n\n"
+        "・『最近、何となく気持ちが落ち着きません』\n"
+        "・『占って』とメッセージに入れるとタロット占いモードになります\n"
+        "・それ以外のメッセージには、いつもの雑談や相談相手としてお話しします\n\n"
         "◆ やさしいお願い\n"
         "医療・法律・投資の判断は専門家に相談してください。\n"
         "占いは心の整理と気づきのヒントで、結果を保証するものではありません。\n"
-        "不安が強いときは無理に信じすぎず、自分を大切にしてくださいね。"
+        "不安が強いときは無理に信じすぎず、自分を大切にしてくださいね。",
     )
 
 
-@dp.message(F.text)
-async def handle_question(message: Message) -> None:
-    user_text = (message.text or "").strip()
-    if not user_text:
-        await message.answer(
-            "気になることをもう少し詳しく教えてくれるとうれしいです。"
-        )
-        return
+async def handle_tarot_reading(message: Message, user_query: str) -> None:
+    logger.info(
+        "Handling message",
+        extra={
+            "mode": "tarot",
+            "user_id": message.from_user.id if message.from_user else None,
+            "text_preview": _preview_text(user_query),
+        },
+    )
 
-    category = categorize_question(user_text)
+    category = categorize_question(user_query)
 
     try:
-        answer, fatal = await call_openai_with_retry(user_text, category)
+        answer, fatal = await call_openai_with_retry(user_query, category)
     except Exception:
         logger.exception("Unexpected error during tarot reading")
         await message.answer(
@@ -189,6 +198,64 @@ async def handle_question(message: Message) -> None:
         return
 
     await message.answer(answer)
+
+
+async def handle_general_chat(message: Message, user_query: str) -> None:
+    logger.info(
+        "Handling message",
+        extra={
+            "mode": "chat",
+            "user_id": message.from_user.id if message.from_user else None,
+            "text_preview": _preview_text(user_query),
+        },
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは日本語で会話する優しいチャットパートナーです。"
+                "ユーザーの日常の悩みや雑談に、落ち着いて丁寧に答えてください。"
+                "タロット占いをしてほしいときは、ユーザーがメッセージの中に『占って』という言葉を書きます。"
+                "そのキーワードがない限り、タロットカードを引いたり、占い結果をねつ造したりしないでください。"
+                "相談内容が重いときも、相手を責めずに気持ちに寄り添う表現を使ってください。"
+                "返答は通常のタロットより少し短め（300〜600文字程度）を目安にしてください。"
+            ),
+        },
+        {"role": "user", "content": user_query},
+    ]
+
+    try:
+        completion = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+        )
+        answer = completion.choices[0].message.content
+        await message.answer(answer)
+    except Exception:
+        logger.exception("Unexpected error during general chat")
+        await message.answer(
+            "すみません、今ちょっと調子が悪いみたいです…\n"
+            "少し時間をおいてから、もう一度メッセージを送ってもらえると助かります。"
+        )
+
+
+@dp.message()
+async def handle_message(message: Message) -> None:
+    text = (message.text or "").strip()
+
+    if text.startswith("/start"):
+        return
+
+    if not text:
+        await message.answer(
+            "気になることをもう少し詳しく教えてくれるとうれしいです。"
+        )
+        return
+
+    if "占って" in text:
+        await handle_tarot_reading(message, user_query=text)
+    else:
+        await handle_general_chat(message, user_query=text)
 
 
 async def main() -> None:
