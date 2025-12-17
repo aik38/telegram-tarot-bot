@@ -27,7 +27,7 @@ from openai import (
     RateLimitError,
 )
 
-from core.config import OPENAI_API_KEY, SUPPORT_EMAIL, TELEGRAM_BOT_TOKEN
+from core.config import ADMIN_USER_IDS, OPENAI_API_KEY, SUPPORT_EMAIL, TELEGRAM_BOT_TOKEN
 from core.db import (
     TicketColumn,
     UserRecord,
@@ -46,12 +46,7 @@ from core.db import (
     set_last_general_chat_block_notice,
     USAGE_TIMEZONE,
 )
-from core.monetization import (
-    ADMIN_USER_IDS,
-    PAYWALL_ENABLED,
-    get_user_with_default,
-    is_premium_user,
-)
+from core.monetization import PAYWALL_ENABLED, get_user_with_default, is_premium_user
 from core.logging import setup_logging
 from core.prompts import CHAT_SYSTEM_PROMPT, TAROT_OUTPUT_RULES, TAROT_SYSTEM_PROMPT
 from core.tarot import (
@@ -340,6 +335,9 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     now = now or utcnow()
     pass_until = user.pass_until or user.premium_until
     has_pass = has_active_pass(user.user_id, now=now)
+    status_title = "現在のご利用状況です。"
+    if is_admin_user(user.user_id):
+        status_title = "現在のご利用状況（管理者モード）です。"
     trial_days_left = _general_chat_trial_days_left(user, now)
     trial_day = _trial_day_number(user, now)
     general_remaining = max(
@@ -376,7 +374,7 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     )
 
     return (
-        "現在のご利用状況です。\n"
+        f"{status_title}\n"
         f"・trial: 初回利用から{trial_day}日目\n"
         f"・パス有効期限: {pass_label}\n"
         f"・ワンオラクル無料枠: 1日{one_oracle_limit}回（本日の残り {one_remaining} 回）\n"
@@ -953,9 +951,10 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     now = utcnow()
     user_id = message.from_user.id if message.from_user else None
     consult_intent = _is_consult_intent(user_query)
+    admin_mode = is_admin_user(user_id)
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
 
-    if user is not None:
+    if user is not None and not admin_mode:
         trial_active = _is_in_general_chat_trial(user, now)
         out_of_quota = user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY
         has_pass = has_active_pass(user_id, now=now)
@@ -1009,6 +1008,7 @@ async def handle_message(message: Message) -> None:
     text = (message.text or "").strip()
     now = utcnow()
     user_id = message.from_user.id if message.from_user else None
+    admin_mode = is_admin_user(user_id)
     user: UserRecord | None = None
 
     if text.startswith("/start"):
@@ -1035,14 +1035,19 @@ async def handle_message(message: Message) -> None:
                     )
                     return
 
-        if spread_from_command == ONE_CARD and user_id is not None and user is not None:
+        if (
+            spread_from_command == ONE_CARD
+            and user_id is not None
+            and user is not None
+            and not admin_mode
+        ):
             allowed, short_response, user = _evaluate_one_oracle_access(
                 user=user, user_id=user_id, now=now
             )
             if not allowed:
                 await message.answer(
                     "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
-                    "複数枚スプレッドやパスは /buy からご利用いただけます。"
+                    "複数枚スプレッドやパスは /buy からご利用いただけます。",
                 )
                 return
 
@@ -1059,15 +1064,16 @@ async def handle_message(message: Message) -> None:
         short_response = False
         if user_id is not None:
             user = ensure_user(user_id, now=now)
-            allowed, short_response, user = _evaluate_one_oracle_access(
-                user=user, user_id=user_id, now=now
-            )
-            if not allowed:
-                await message.answer(
-                    "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
-                    "複数枚スプレッドやパスは /buy からご利用いただけます。"
+            if not admin_mode:
+                allowed, short_response, user = _evaluate_one_oracle_access(
+                    user=user, user_id=user_id, now=now
                 )
-                return
+                if not allowed:
+                    await message.answer(
+                        "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
+                        "複数枚スプレッドやパスは /buy からご利用いただけます。",
+                    )
+                    return
         else:
             user = None
         guidance_note = build_paid_hint(text)
