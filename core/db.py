@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -16,12 +16,17 @@ DB_PATH = os.getenv("SQLITE_DB_PATH", "db/telegram_tarot.db")
 class UserRecord:
     user_id: int
     created_at: datetime
+    first_seen: datetime
+    pass_until: datetime | None
     premium_until: datetime | None
     tickets_3: int
     tickets_7: int
     tickets_10: int
     images_enabled: bool
     terms_accepted_at: datetime | None
+    general_chat_count_today: int
+    one_oracle_count_today: int
+    usage_date: date | None
 
 
 @dataclass
@@ -67,6 +72,11 @@ def init_db() -> None:
                 user_id INTEGER PRIMARY KEY,
                 created_at TEXT,
                 premium_until TEXT,
+                pass_until TEXT,
+                first_seen TEXT,
+                usage_date TEXT,
+                general_chat_count_today INT,
+                one_oracle_count_today INT,
                 tickets_3 INT,
                 tickets_7 INT,
                 tickets_10 INT,
@@ -94,6 +104,20 @@ def init_db() -> None:
 
         if not _column_exists(conn, "users", "terms_accepted_at"):
             conn.execute("ALTER TABLE users ADD COLUMN terms_accepted_at TEXT")
+        if not _column_exists(conn, "users", "pass_until"):
+            conn.execute("ALTER TABLE users ADD COLUMN pass_until TEXT")
+        if not _column_exists(conn, "users", "first_seen"):
+            conn.execute("ALTER TABLE users ADD COLUMN first_seen TEXT")
+        if not _column_exists(conn, "users", "usage_date"):
+            conn.execute("ALTER TABLE users ADD COLUMN usage_date TEXT")
+        if not _column_exists(conn, "users", "general_chat_count_today"):
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN general_chat_count_today INT DEFAULT 0"
+            )
+        if not _column_exists(conn, "users", "one_oracle_count_today"):
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN one_oracle_count_today INT DEFAULT 0"
+            )
 
         if not _column_exists(conn, "payments", "status"):
             conn.execute("ALTER TABLE payments ADD COLUMN status TEXT")
@@ -113,36 +137,61 @@ def init_db() -> None:
             """
         )
 
+        _backfill_user_columns(conn)
+
 
 def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
     now = now or datetime.now(timezone.utc)
     with _connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         if row:
-            return _row_to_user(row)
+            refreshed = _refresh_daily_counts(conn, row, now)
+            return _row_to_user(refreshed)
 
         conn.execute(
             """
-            INSERT INTO users (user_id, created_at, premium_until, tickets_3, tickets_7, tickets_10, images_enabled, terms_accepted_at)
-            VALUES (?, ?, NULL, 0, 0, 0, 0, NULL)
+            INSERT INTO users (
+                user_id,
+                created_at,
+                premium_until,
+                pass_until,
+                first_seen,
+                usage_date,
+                general_chat_count_today,
+                one_oracle_count_today,
+                tickets_3,
+                tickets_7,
+                tickets_10,
+                images_enabled,
+                terms_accepted_at
+            )
+            VALUES (?, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, 0, 0, NULL)
             """,
-            (user_id, now.isoformat()),
+            (user_id, now.isoformat(), now.isoformat(), now.date().isoformat()),
         )
         return UserRecord(
             user_id=user_id,
             created_at=now,
+            first_seen=now,
+            pass_until=None,
             premium_until=None,
             tickets_3=0,
             tickets_7=0,
             tickets_10=0,
             images_enabled=False,
             terms_accepted_at=None,
+            general_chat_count_today=0,
+            one_oracle_count_today=0,
+            usage_date=now.date(),
         )
 
 
-def get_user(user_id: int) -> UserRecord | None:
+def get_user(user_id: int, *, now: datetime | None = None) -> UserRecord | None:
+    now = now or datetime.now(timezone.utc)
     with _connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row:
+            row = _refresh_daily_counts(conn, row, now)
     if not row:
         return None
     return _row_to_user(row)
@@ -224,20 +273,31 @@ def mark_payment_refunded(
 
 def _row_to_user(row: sqlite3.Row) -> UserRecord:
     premium_until = row["premium_until"]
+    pass_until = row["pass_until"]
     premium_dt = datetime.fromisoformat(premium_until) if premium_until else None
+    pass_dt = datetime.fromisoformat(pass_until) if pass_until else None
     terms_accepted_raw = row["terms_accepted_at"]
     terms_accepted_dt = (
         datetime.fromisoformat(terms_accepted_raw) if terms_accepted_raw else None
     )
+    first_seen_raw = row["first_seen"] or row["created_at"]
+    first_seen_dt = datetime.fromisoformat(first_seen_raw)
+    usage_date_raw = row["usage_date"]
+    usage_date = date.fromisoformat(usage_date_raw) if usage_date_raw else None
     return UserRecord(
         user_id=row["user_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
+        first_seen=first_seen_dt,
+        pass_until=pass_dt,
         premium_until=premium_dt,
         tickets_3=row["tickets_3"],
         tickets_7=row["tickets_7"],
         tickets_10=row["tickets_10"],
         images_enabled=bool(row["images_enabled"]),
         terms_accepted_at=terms_accepted_dt,
+        general_chat_count_today=row["general_chat_count_today"],
+        one_oracle_count_today=row["one_oracle_count_today"],
+        usage_date=usage_date,
     )
 
 
@@ -286,13 +346,17 @@ def grant_purchase(user_id: int, sku: str, *, now: datetime | None = None) -> Us
         if sku.startswith("PASS_"):
             days = 7 if sku == "PASS_7D" else 30
             row = conn.execute(
-                "SELECT premium_until FROM users WHERE user_id = ?", (user_id,)
+                "SELECT pass_until FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
-            current_until = datetime.fromisoformat(row["premium_until"]) if row["premium_until"] else None
+            current_until = (
+                datetime.fromisoformat(row["pass_until"])
+                if row["pass_until"]
+                else None
+            )
             new_until = _add_days_to_premium(current_until, days, now=now)
             conn.execute(
-                "UPDATE users SET premium_until = ? WHERE user_id = ?",
-                (new_until.isoformat(), user_id),
+                "UPDATE users SET pass_until = ?, premium_until = ? WHERE user_id = ?",
+                (new_until.isoformat(), new_until.isoformat(), user_id),
             )
         elif sku.startswith("TICKET_"):
             column = _ticket_column_for_sku(sku)
@@ -345,9 +409,91 @@ def set_terms_accepted(user_id: int, *, now: datetime | None = None) -> UserReco
 def has_active_pass(user_id: int, *, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     user = get_user(user_id)
-    if not user or not user.premium_until:
+    if not user:
         return False
-    return user.premium_until > now
+    if user.pass_until:
+        return user.pass_until > now
+    if user.premium_until:
+        return user.premium_until > now
+    return False
+
+
+def increment_general_chat_count(user_id: int, *, now: datetime | None = None) -> UserRecord:
+    return _increment_daily_count(
+        user_id, column="general_chat_count_today", now=now
+    )
+
+
+def increment_one_oracle_count(user_id: int, *, now: datetime | None = None) -> UserRecord:
+    return _increment_daily_count(
+        user_id, column="one_oracle_count_today", now=now
+    )
+
+
+def _increment_daily_count(
+    user_id: int, *, column: str, now: datetime | None = None
+) -> UserRecord:
+    now = now or datetime.now(timezone.utc)
+    ensure_user(user_id, now=now)
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise ValueError("User must exist to increment usage counters")
+        today = now.date().isoformat()
+        conn.execute(
+            f"""
+            UPDATE users
+            SET usage_date = ?,
+                {column} = CASE WHEN usage_date = ? THEN {column} + 1 ELSE 1 END
+            WHERE user_id = ?
+            """,
+            (today, today, user_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    if updated is None:
+        raise ValueError("Failed to reload user after increment")
+    return _row_to_user(updated)
+
+
+def _refresh_daily_counts(
+    conn: sqlite3.Connection, row: sqlite3.Row, now: datetime
+) -> sqlite3.Row:
+    usage_raw = row["usage_date"]
+    today = now.date()
+    usage_date_val = date.fromisoformat(usage_raw) if usage_raw else None
+    if usage_date_val == today:
+        return row
+
+    conn.execute(
+        """
+        UPDATE users
+        SET usage_date = ?, general_chat_count_today = 0, one_oracle_count_today = 0
+        WHERE user_id = ?
+        """,
+        (today.isoformat(), row["user_id"]),
+    )
+    refreshed = conn.execute(
+        "SELECT * FROM users WHERE user_id = ?", (row["user_id"],)
+    ).fetchone()
+    return refreshed if refreshed else row
+
+
+def _backfill_user_columns(conn: sqlite3.Connection) -> None:
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    conn.execute(
+        """
+        UPDATE users
+        SET first_seen = COALESCE(first_seen, created_at),
+            usage_date = COALESCE(usage_date, ?),
+            general_chat_count_today = COALESCE(general_chat_count_today, 0),
+            one_oracle_count_today = COALESCE(one_oracle_count_today, 0),
+            pass_until = COALESCE(pass_until, premium_until)
+        """,
+        (today,),
+    )
 
 
 init_db()
@@ -364,6 +510,8 @@ __all__ = [
     "grant_purchase",
     "has_active_pass",
     "has_accepted_terms",
+    "increment_general_chat_count",
+    "increment_one_oracle_count",
     "init_db",
     "log_payment",
     "mark_payment_refunded",

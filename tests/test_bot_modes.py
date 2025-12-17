@@ -129,11 +129,10 @@ def test_start_message_shorter(monkeypatch, tmp_path):
     asyncio.run(bot_main.cmd_start(message))
 
     assert message.answers
-    assert "【すぐ占う（カード確定）】" in message.answers[0]
-    assert "【自由入力でもOK】" in message.answers[0]
+    assert "1日2回" in message.answers[0]
+    assert "ショート" in message.answers[0]
     assert "/read1" in message.answers[0]
     assert "/read3" in message.answers[0]
-    assert "恋愛専用" not in message.answers[0]
 
 
 def test_love1_command_is_alias(monkeypatch, tmp_path):
@@ -141,7 +140,9 @@ def test_love1_command_is_alias(monkeypatch, tmp_path):
 
     calls: list[tuple[str, object]] = []
 
-    async def fake_handle_tarot(message, user_query: str, spread, guidance_note=None):
+    async def fake_handle_tarot(
+        message, user_query: str, spread, guidance_note=None, short_response=False
+    ):
         calls.append((user_query, spread))
 
     monkeypatch.setattr(bot_main, "handle_tarot_reading", fake_handle_tarot)
@@ -239,7 +240,7 @@ def test_agree_and_buy_callback_opens_store(monkeypatch, tmp_path):
     user = bot_main.get_user(user_id)
     assert bot_main.has_accepted_terms(user_id)
     assert user is not None
-    assert any("ご希望のメニュー" in ans for ans in message.answers)
+    assert any("必要に合う" in ans or "Stars" in ans for ans in message.answers)
 
 
 def test_successful_payment_not_double_granted(monkeypatch, tmp_path):

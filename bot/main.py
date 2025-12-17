@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+from datetime import datetime, timezone
 from typing import Iterable
 
 from aiogram import Bot, Dispatcher, F
@@ -36,6 +37,9 @@ from core.db import (
     get_user,
     grant_purchase,
     has_accepted_terms,
+    has_active_pass,
+    increment_general_chat_count,
+    increment_one_oracle_count,
     log_payment,
     mark_payment_refunded,
     set_terms_accepted,
@@ -67,6 +71,15 @@ dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
+
+FREE_ONE_ORACLE_PER_DAY = 2
+FREE_GENERAL_CHAT_PER_DAY = 2
+FREE_GENERAL_CHAT_DAYS = 5
+ONE_ORACLE_MEMORY: dict[tuple[int, str], int] = {}
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
@@ -169,6 +182,45 @@ TICKET_SKU_TO_COLUMN: dict[str, TicketColumn] = {
 }
 
 
+SHORT_TAROT_OUTPUT_RULES = [
+    "引いたカード名（正逆）と位置を最初に短く伝える。",
+    "結論とアドバイスを中心に180〜260文字でまとめる。",
+    "専門領域は専門家相談を促し、断定を避けてやさしく。",
+]
+
+
+def _days_since_first_seen(user: UserRecord, now: datetime) -> int:
+    return (now.date() - user.first_seen.date()).days
+
+
+def _general_chat_trial_days_left(user: UserRecord, now: datetime) -> int:
+    used_days = _days_since_first_seen(user, now)
+    return max(0, FREE_GENERAL_CHAT_DAYS - (used_days + 1))
+
+
+def _is_in_general_chat_trial(user: UserRecord, now: datetime) -> bool:
+    return _days_since_first_seen(user, now) < FREE_GENERAL_CHAT_DAYS
+
+
+def _evaluate_one_oracle_access(
+    *, user: UserRecord, user_id: int, now: datetime
+) -> tuple[bool, bool, UserRecord]:
+    latest_user = get_user(user_id, now=now) or user
+    has_pass = is_premium_user(user_id, now=now)
+    date_key = now.date().isoformat()
+    memory_key = (user_id, date_key)
+    base_count = ONE_ORACLE_MEMORY.get(memory_key, latest_user.one_oracle_count_today)
+
+    if not has_pass and base_count >= FREE_ONE_ORACLE_PER_DAY:
+        return False, False, latest_user
+
+    new_count = base_count + 1
+    ONE_ORACLE_MEMORY[memory_key] = new_count
+    updated_user = increment_one_oracle_count(user_id, now=now)
+    short_response = not has_pass and new_count <= FREE_ONE_ORACLE_PER_DAY
+    return True, short_response, updated_user
+
+
 def choose_spread(_: str) -> Spread:
     return ONE_CARD
 
@@ -217,21 +269,16 @@ def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です🌿\n"
-        "恋愛・仕事・お金・気分のモヤモヤまで、気軽にどうぞ。\n\n"
-        "【すぐ占う（カード確定）】\n"
-        "/read1  1枚引き（まずはここ）\n"
-        "/read3  3枚スプレッド\n"
-        "/hexa   ヘキサグラム（7枚）\n"
-        "/celtic ケルト十字（10枚）\n"
-        "/love1 /love3  恋愛スプレッド\n\n"
-        "【自由入力でもOK】\n"
-        "文章の最後に「占って」を付けるだけで1枚引きます。\n"
-        "例：『彼から連絡きますか？占って』\n"
-        "※カードなしの相談だけでも気軽に送ってください。\n\n"
+        "占いは1枚引きが1日2回まで無料（ショート版）。深掘りはコマンドでどうぞ。\n"
+        "雑談・相談は初回5日間だけ1日2通まで無料、6日目以降はパスで解放できます。\n\n"
+        "【占いの使い方】\n"
+        "/read1 または『〇〇 占って』で1枚（無料枠はショート回答）\n"
+        "/read3 /hexa /celtic で3・7・10枚スプレッド\n"
+        "恋愛専用：/love1 /love3\n\n"
         "【購入・確認】\n"
-        "/buy    有料メニュー（Stars）\n"
-        "/status 利用状況の確認\n\n"
-        "【大事な案内】\n"
+        "/buy    メニューとStars決済\n"
+        "/status 残高・無料枠・パス期限\n\n"
+        "【サポートと規約】\n"
         "/terms      利用規約\n"
         "/support    お問い合わせ\n"
         "/paysupport 決済トラブル\n"
@@ -241,8 +288,10 @@ def get_start_text() -> str:
 
 def get_store_intro_text() -> str:
     return (
-        "ご利用ありがとうございます。ご希望のメニューを選んでください。\n"
-        "迷ったら3枚スプレッドがおすすめです（状況整理に向いています）。\n"
+        "ご利用ありがとうございます。必要に合うものをお選びください。\n"
+        "・3枚：まず状況を整理したい方向け\n"
+        "・7枚/10枚：深掘りしたいときに\n"
+        "・パス：毎日占いや雑談を使う方向け\n"
         "Stars (XTR) 決済に対応しています。"
     )
 
@@ -254,11 +303,32 @@ def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
     return consume_ticket(user_id, ticket=column)
 
 
-def format_status(user: UserRecord) -> str:
-    premium_until = user.premium_until.isoformat(sep=" ") if user.premium_until else "なし"
+def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
+    now = now or utcnow()
+    pass_until = user.pass_until or user.premium_until
+    pass_label = pass_until.isoformat(sep=" ") if pass_until else "なし"
+    one_remaining = max(FREE_ONE_ORACLE_PER_DAY - user.one_oracle_count_today, 0)
+    has_pass = has_active_pass(user.user_id, now=now)
+    trial_days_left = _general_chat_trial_days_left(user, now)
+    general_remaining = max(
+        FREE_GENERAL_CHAT_PER_DAY - user.general_chat_count_today, 0
+    )
+
+    general_line: str
+    if has_pass:
+        general_line = "パス有効中：雑談/相談はいつでもどうぞ。"
+    elif trial_days_left > 0:
+        general_line = (
+            f"無料期間あと{trial_days_left}日（本日の残り {general_remaining} 通）"
+        )
+    else:
+        general_line = "無料期間終了：パス購入で雑談が解放されます。"
+
     return (
         "現在のご利用状況です。\n"
-        f"・有効期限つきパス: {premium_until}\n"
+        f"・パス有効期限: {pass_label}\n"
+        f"・1枚引き無料枠: 残り {one_remaining} 回/日（無料分はショート回答）\n"
+        f"・雑談/相談: {general_line}\n"
         f"・3枚チケット: {user.tickets_3}枚\n"
         f"・7枚チケット: {user.tickets_7}枚\n"
         f"・10枚チケット: {user.tickets_10}枚\n"
@@ -287,9 +357,14 @@ def build_unlock_text(product: Product, user: UserRecord) -> str:
 
 
 def build_tarot_messages(
-    *, spread: Spread, user_query: str, drawn_cards: list[dict[str, str]]
+    *,
+    spread: Spread,
+    user_query: str,
+    drawn_cards: list[dict[str, str]],
+    short: bool = False,
 ) -> list[dict[str, str]]:
-    rules_text = "\n".join(f"- {rule}" for rule in TAROT_OUTPUT_RULES)
+    rules = SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
+    rules_text = "\n".join(f"- {rule}" for rule in rules)
     tarot_system_prompt = f"{TAROT_SYSTEM_PROMPT}\n出力ルール:\n{rules_text}"
 
     tarot_payload = {
@@ -396,12 +471,13 @@ def get_support_text() -> str:
 def get_pay_support_text() -> str:
     support_email = get_support_email()
     return (
-        "決済トラブルの受付です。下記を分かる範囲でお知らせください。\n"
-        "1) 購入日時\n"
-        "2) 商品名（SKUが分かればSKU）\n"
-        "3) telegram_payment_charge_id（表示される場合）\n"
-        "4) スクリーンショット\n"
-        "確認のうえ、必要に応じて返金／付与対応します。\n"
+        "決済トラブルの受付です。下記テンプレをコピーしてお知らせください。\n"
+        "購入日時: \n"
+        "商品名/SKU: \n"
+        "charge_id: （表示される場合）\n"
+        "支払方法: Stars / その他\n"
+        "スクリーンショット: あり/なし\n"
+        "確認のうえ、必要に応じて返金や付与対応を行います。\n"
         f"連絡先: {support_email}"
     )
 
@@ -544,8 +620,9 @@ async def cmd_status(message: Message) -> None:
         await message.answer("ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。")
         return
 
-    user = get_user_with_default(user_id) or ensure_user(user_id)
-    status = format_status(user)
+    now = utcnow()
+    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
+    status = format_status(user, now=now)
     await message.answer(status)
 
 
@@ -688,6 +765,7 @@ async def handle_tarot_reading(
     *,
     spread: Spread | None = None,
     guidance_note: str | None = None,
+    short_response: bool = False,
 ) -> None:
     logger.info(
         "Handling message",
@@ -732,6 +810,7 @@ async def handle_tarot_reading(
         spread=spread_to_use,
         user_query=user_query,
         drawn_cards=drawn_payload,
+        short=short_response,
     )
 
     try:
@@ -758,6 +837,24 @@ async def handle_tarot_reading(
 
 
 async def handle_general_chat(message: Message, user_query: str) -> None:
+    now = utcnow()
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is not None:
+        user = ensure_user(user_id, now=now)
+        if _is_in_general_chat_trial(user, now):
+            if user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY:
+                await message.answer(
+                    "今日の雑談無料枠（2通）は使い切りました。/buy で7日/30日パスを購入すると回数無制限で相談できます。"
+                )
+                return
+        elif not has_active_pass(user_id, now=now):
+            await message.answer(
+                "6日目以降の雑談/相談はパス専用です。/buy から7日または30日のパスをご検討ください。"
+            )
+            return
+
+        increment_general_chat_count(user_id, now=now)
+
     logger.info(
         "Handling message",
         extra={
@@ -788,6 +885,9 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
 @dp.message()
 async def handle_message(message: Message) -> None:
     text = (message.text or "").strip()
+    now = utcnow()
+    user_id = message.from_user.id if message.from_user else None
+    user: UserRecord | None = None
 
     if text.startswith("/start"):
         return
@@ -797,16 +897,15 @@ async def handle_message(message: Message) -> None:
             "気になることをもう少し詳しく教えてくれるとうれしいです。"
         )
         return
-
     spread_from_command, cleaned = parse_spread_command(text)
-    user_id = message.from_user.id if message.from_user else None
 
     if spread_from_command:
+        short_response = False
         if user_id is not None:
-            ensure_user(user_id)
+            user = ensure_user(user_id, now=now)
 
         if PAYWALL_ENABLED and is_paid_spread(spread_from_command):
-            if not is_premium_user(user_id):
+            if not is_premium_user(user_id, now=now):
                 if user_id is None or not consume_ticket_for_spread(user_id, spread_from_command):
                     await message.answer(
                         "こちらは有料メニューです。\n"
@@ -814,20 +913,45 @@ async def handle_message(message: Message) -> None:
                     )
                     return
 
+        if spread_from_command == ONE_CARD and user_id is not None and user is not None:
+            allowed, short_response, user = _evaluate_one_oracle_access(
+                user=user, user_id=user_id, now=now
+            )
+            if not allowed:
+                await message.answer(
+                    "1枚引きの無料枠（1日2回）は使い切りました。/buy でパスや複数枚スプレッドをご検討ください。"
+                )
+                return
+
         user_query = cleaned or "今気になっていることについて占ってください。"
         await handle_tarot_reading(
             message,
             user_query=user_query,
             spread=spread_from_command,
+            short_response=short_response,
         )
         return
 
     if is_tarot_request(text):
+        short_response = False
+        if user_id is not None:
+            user = ensure_user(user_id, now=now)
+            allowed, short_response, user = _evaluate_one_oracle_access(
+                user=user, user_id=user_id, now=now
+            )
+            if not allowed:
+                await message.answer(
+                    "1枚引きの無料枠（1日2回）は使い切りました。/buy でパスや複数枚スプレッドをご検討ください。"
+                )
+                return
+        else:
+            user = None
         guidance_note = build_paid_hint(text)
         await handle_tarot_reading(
             message,
             user_query=text,
             guidance_note=guidance_note,
+            short_response=short_response,
         )
     else:
         await handle_general_chat(message, user_query=text)
