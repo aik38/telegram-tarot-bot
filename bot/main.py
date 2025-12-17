@@ -85,6 +85,10 @@ IMAGE_ADDON_ENABLED = os.getenv("IMAGE_ADDON_ENABLED", "false").strip().lower() 
     "yes",
     "on",
 }
+NON_CONSULT_OUT_OF_QUOTA_MESSAGE = (
+    "このボットはタロット占い・相談用です。占いは /read1、恋愛は /love1 などをご利用"
+    "ください。購入は /buy です。"
+)
 GENERAL_CHAT_BLOCK_NOTICE_COOLDOWN = timedelta(hours=1)
 
 
@@ -570,7 +574,7 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"画像追加オプション（準備中） - {product.price_stars}⭐️",
+                        text="画像追加オプション（準備中）",
                         callback_data="addon:pending",
                     )
                 ]
@@ -905,7 +909,25 @@ async def handle_tarot_reading(
 
 
 def _is_consult_intent(text: str) -> bool:
-    return text.startswith("相談:") or text.startswith("相談：")
+    stripped = text.strip()
+    if stripped.startswith(("相談:", "相談：")):
+        return True
+
+    lowered = stripped.lower()
+    consult_keywords = [
+        "悩み",
+        "相談",
+        "不安",
+        "辛い",
+        "つらい",
+        "どうすれば",
+        "復縁",
+        "別れ",
+        "仕事",
+        "人間関係",
+        "お金",
+    ]
+    return any(keyword in lowered for keyword in consult_keywords)
 
 
 def _should_show_general_chat_full_notice(user: UserRecord, now: datetime) -> bool:
@@ -940,11 +962,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
 
         if (trial_active and out_of_quota) or (not trial_active and not has_pass):
             if not consult_intent:
-                await message.answer(
-                    "ご連絡ありがとうございます。ご相談は本日の無料枠を使い切りました。"
-                    "占いは /read1 や『〇〇占って』でいつでもどうぞ。"
-                    "ご相談を続ける場合は /buy からパスをご利用ください。"
-                )
+                await message.answer(NON_CONSULT_OUT_OF_QUOTA_MESSAGE)
                 return
 
             full_notice = _should_show_general_chat_full_notice(user, now)
