@@ -30,6 +30,13 @@ def import_bot_main(monkeypatch, tmp_path):
     return importlib.import_module("bot.main")
 
 
+def test_consult_intent_detection(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+
+    assert bot_main._is_consult_intent("最近人気のユーチューブ動画を教えて") is False
+    assert bot_main._is_consult_intent("相談: 復縁できますか？") is True
+
+
 def test_general_chat_trial_limits(monkeypatch, tmp_path):
     bot_main = import_bot_main(monkeypatch, tmp_path)
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -50,7 +57,7 @@ def test_general_chat_trial_limits(monkeypatch, tmp_path):
 
     assert len(first.answers) == 1
     assert len(second.answers) == 1
-    assert any("無料枠" in ans for ans in third.answers)
+    assert third.answers == [bot_main.NON_CONSULT_OUT_OF_QUOTA_MESSAGE]
 
 
 def test_general_chat_block_notice_cooldown(monkeypatch, tmp_path):
@@ -95,7 +102,7 @@ def test_general_chat_requires_pass_after_trial(monkeypatch, tmp_path):
     message = DummyMessage("6日目の雑談", user_id=1)
     asyncio.run(bot_main.handle_message(message))
 
-    assert any("パス" in ans for ans in message.answers)
+    assert message.answers == [bot_main.NON_CONSULT_OUT_OF_QUOTA_MESSAGE]
 
 
 def test_one_oracle_limit_triggers_short_response(monkeypatch, tmp_path):
