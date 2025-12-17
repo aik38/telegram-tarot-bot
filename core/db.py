@@ -10,6 +10,11 @@ from typing import Literal
 from core.store.catalog import get_product
 
 DB_PATH = os.getenv("SQLITE_DB_PATH", "db/telegram_tarot.db")
+USAGE_TIMEZONE = timezone(timedelta(hours=9))
+
+
+def _usage_date(now: datetime) -> date:
+    return now.astimezone(USAGE_TIMEZONE).date()
 
 
 @dataclass
@@ -142,6 +147,7 @@ def init_db() -> None:
 
 def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
     now = now or datetime.now(timezone.utc)
+    usage_today = _usage_date(now)
     with _connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         if row:
@@ -167,7 +173,7 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
             )
             VALUES (?, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, 0, 0, NULL)
             """,
-            (user_id, now.isoformat(), now.isoformat(), now.date().isoformat()),
+            (user_id, now.isoformat(), now.isoformat(), usage_today.isoformat()),
         )
         return UserRecord(
             user_id=user_id,
@@ -182,7 +188,7 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
             terms_accepted_at=None,
             general_chat_count_today=0,
             one_oracle_count_today=0,
-            usage_date=now.date(),
+            usage_date=usage_today,
         )
 
 
@@ -439,7 +445,7 @@ def _increment_daily_count(
         row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         if row is None:
             raise ValueError("User must exist to increment usage counters")
-        today = now.date().isoformat()
+        today = _usage_date(now).isoformat()
         conn.execute(
             f"""
             UPDATE users
@@ -461,7 +467,7 @@ def _refresh_daily_counts(
     conn: sqlite3.Connection, row: sqlite3.Row, now: datetime
 ) -> sqlite3.Row:
     usage_raw = row["usage_date"]
-    today = now.date()
+    today = _usage_date(now)
     usage_date_val = date.fromisoformat(usage_raw) if usage_raw else None
     if usage_date_val == today:
         return row
@@ -482,7 +488,7 @@ def _refresh_daily_counts(
 
 def _backfill_user_columns(conn: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc)
-    today = now.date().isoformat()
+    today = _usage_date(now).isoformat()
     conn.execute(
         """
         UPDATE users

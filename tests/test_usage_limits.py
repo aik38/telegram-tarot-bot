@@ -97,15 +97,41 @@ def test_one_oracle_limit_triggers_short_response(monkeypatch, tmp_path):
     assert any("無料枠" in ans for ans in third.answers)
 
 
-def test_daily_counts_reset(monkeypatch, tmp_path):
+def test_one_oracle_limit_after_trial(monkeypatch, tmp_path):
     bot_main = import_bot_main(monkeypatch, tmp_path)
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bot_main.ensure_user(5, now=base)
+    day_six = base + timedelta(days=5)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: day_six)
+
+    calls: list[bool] = []
+
+    async def fake_tarot(
+        message, user_query: str, spread=None, guidance_note=None, short_response=False
+    ):
+        calls.append(short_response)
+
+    monkeypatch.setattr(bot_main, "handle_tarot_reading", fake_tarot)
+
+    first = DummyMessage("占って", user_id=5)
+    second = DummyMessage("占って", user_id=5)
+
+    asyncio.run(bot_main.handle_message(first))
+    asyncio.run(bot_main.handle_message(second))
+
+    assert calls == [True]
+    assert any("無料枠" in ans for ans in second.answers)
+
+
+def test_daily_counts_reset(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    base = datetime(2024, 1, 1, 14, 30, tzinfo=timezone.utc)
     user_id = 3
     bot_main.ensure_user(user_id, now=base)
     bot_main.increment_general_chat_count(user_id, now=base)
     bot_main.increment_one_oracle_count(user_id, now=base)
 
-    next_day = base + timedelta(days=1)
+    next_day = base + timedelta(hours=2)
     user = bot_main.get_user(user_id, now=next_day)
 
     assert user is not None

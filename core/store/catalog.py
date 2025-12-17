@@ -17,39 +17,39 @@ class Product:
 
 PRODUCTS: tuple[Product, ...] = (
     Product(
-        sku="TICKET_3",
-        title="3枚スプレッドチケット",
-        description="まずは状況を整理したい方向けの3枚引き1回分です。",
-        price_stars=350,
-        kind="ticket",
-    ),
-    Product(
-        sku="TICKET_7",
-        title="7枚スプレッドチケット",
-        description="深掘りをしたいときの7枚スプレッド1回分です。",
-        price_stars=1000,
-        kind="ticket",
-    ),
-    Product(
-        sku="TICKET_10",
-        title="10枚スプレッドチケット",
-        description="じっくり見たい方の10枚スプレッド1回分です。",
-        price_stars=1500,
-        kind="ticket",
-    ),
-    Product(
         sku="PASS_7D",
         title="7日パス",
         description="毎日占いや雑談を楽しみたい方向けの7日間パスです。",
-        price_stars=500,
+        price_stars=1000,
         kind="pass",
     ),
     Product(
         sku="PASS_30D",
         title="30日パス",
         description="ひと月まとめて安心して使える30日パスです。",
-        price_stars=1000,
+        price_stars=3500,
         kind="pass",
+    ),
+    Product(
+        sku="TICKET_3",
+        title="3枚スプレッドチケット",
+        description="まずは状況を整理したい方向けの3枚引き1回分です。",
+        price_stars=100,
+        kind="ticket",
+    ),
+    Product(
+        sku="TICKET_7",
+        title="7枚スプレッドチケット",
+        description="深掘りをしたいときの7枚スプレッド1回分です。",
+        price_stars=300,
+        kind="ticket",
+    ),
+    Product(
+        sku="TICKET_10",
+        title="10枚スプレッドチケット",
+        description="じっくり見たい方の10枚スプレッド1回分です。",
+        price_stars=500,
+        kind="ticket",
     ),
     Product(
         sku="ADDON_IMAGES",
