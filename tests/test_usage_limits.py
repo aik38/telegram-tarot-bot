@@ -24,7 +24,7 @@ def import_bot_main(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:TESTTOKEN")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy")
     monkeypatch.setenv("SUPPORT_EMAIL", "support@example.com")
-    for module in ["core.monetization", "core.db", "bot.main"]:
+    for module in ["core.config", "core.monetization", "core.db", "bot.main"]:
         if module in sys.modules:
             del sys.modules[module]
     return importlib.import_module("bot.main")
@@ -171,3 +171,67 @@ def test_daily_counts_reset(monkeypatch, tmp_path):
     assert user is not None
     assert user.general_chat_count_today == 0
     assert user.one_oracle_count_today == 0
+
+
+def test_admin_bypass_general_chat_limits(monkeypatch, tmp_path):
+    admin_id = 1357890414
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: base)
+
+    async def fake_call(messages):
+        return "ok", False
+
+    monkeypatch.setattr(bot_main, "call_openai_with_retry", fake_call)
+
+    messages = [
+        DummyMessage("相談: 1通目", user_id=admin_id),
+        DummyMessage("相談: 2通目", user_id=admin_id),
+        DummyMessage("相談: 3通目", user_id=admin_id),
+    ]
+
+    for msg in messages:
+        asyncio.run(bot_main.handle_message(msg))
+
+    assert all(len(msg.answers) == 1 for msg in messages)
+    user = bot_main.get_user(admin_id, now=base)
+    assert user is not None
+    assert user.general_chat_count_today == 0
+
+
+def test_admin_bypass_one_oracle_limits(monkeypatch, tmp_path):
+    admin_id = 1357890414
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: base)
+
+    calls: list[bool] = []
+
+    async def fake_tarot(
+        message, user_query: str, spread=None, guidance_note=None, short_response=False
+    ):
+        calls.append(short_response)
+
+    monkeypatch.setattr(bot_main, "handle_tarot_reading", fake_tarot)
+
+    for _ in range(3):
+        asyncio.run(bot_main.handle_message(DummyMessage("占って", user_id=admin_id)))
+
+    user = bot_main.get_user(admin_id, now=base)
+    assert user is not None
+    assert user.one_oracle_count_today == 0
+    assert calls == [False, False, False]
+
+
+def test_status_shows_admin_mode(monkeypatch, tmp_path):
+    admin_id = 1357890414
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    user = bot_main.ensure_user(admin_id, now=now)
+
+    status = bot_main.format_status(user, now=now)
+
+    assert "管理者モード" in status
