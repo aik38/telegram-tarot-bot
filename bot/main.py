@@ -315,9 +315,10 @@ def get_start_text() -> str:
 def get_store_intro_text() -> str:
     return (
         "ご利用ありがとうございます。お悩みに合わせてお選びください。\n"
-        "・迷ったら：3枚かケルト十字でじっくり整理\n"
+        "・迷ったら：スリーカード(3枚)かケルト十字(10枚)でじっくり整理\n"
         "・相談重視：7日/30日パスで相談チャットを解放\n"
-        "・決済はTelegram Stars (XTR) です。ゆっくりお進みください。"
+        "・決済はTelegram Stars (XTR) です。ゆっくりお進みください。\n"
+        "・価格は選択後に表示されます。"
     )
 
 
@@ -575,7 +576,7 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{product.title} - {product.price_stars}⭐️", callback_data=f"buy:{product.sku}"
+                    text=product.title, callback_data=f"buy:{product.sku}"
                 )
             ]
         )
