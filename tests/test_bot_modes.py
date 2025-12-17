@@ -191,10 +191,24 @@ def test_terms_required_before_buy(monkeypatch, tmp_path):
     assert any("/terms" in ans or "同意" in ans for ans in message.answers)
 
 
-def test_terms_text_uses_support_email(monkeypatch):
-    bot_main = import_bot_main(monkeypatch)
-    assert "hasegawaarisa1@gmail.com" in bot_main.TERMS_TEXT
-    assert bot_main.SUPPORT_EMAIL == "hasegawaarisa1@gmail.com"
+def test_terms_support_and_pay_support_use_configured_email(monkeypatch, tmp_path):
+    support_email = "support@tarot.test"
+    monkeypatch.setenv("SUPPORT_EMAIL", support_email)
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+
+    terms_message = DummyMessage("/terms", user_id=500)
+    asyncio.run(bot_main.cmd_terms(terms_message))
+
+    support_message = DummyMessage("/support", user_id=500)
+    asyncio.run(bot_main.cmd_support(support_message))
+
+    pay_support_message = DummyMessage("/paysupport", user_id=500)
+    asyncio.run(bot_main.cmd_pay_support(pay_support_message))
+
+    assert support_email in bot_main.get_terms_text()
+    assert any(support_email in ans for ans in terms_message.answers)
+    assert any(support_email in ans for ans in support_message.answers)
+    assert any(support_email in ans for ans in pay_support_message.answers)
 
 
 def test_buy_shows_terms_prompt_keyboard(monkeypatch, tmp_path):

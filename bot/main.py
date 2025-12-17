@@ -26,7 +26,7 @@ from openai import (
     RateLimitError,
 )
 
-from core.config import OPENAI_API_KEY, TELEGRAM_BOT_TOKEN
+from core.config import OPENAI_API_KEY, SUPPORT_EMAIL, TELEGRAM_BOT_TOKEN
 from core.db import (
     TicketColumn,
     UserRecord,
@@ -61,9 +61,6 @@ from core.tarot import (
 )
 from core.tarot.spreads import Spread
 from core.store.catalog import Product, get_product, iter_products
-
-
-SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "hasegawaarisa1@gmail.com")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -198,6 +195,13 @@ def is_admin_user(user_id: int | None) -> bool:
     return user_id is not None and user_id in ADMIN_USER_IDS
 
 
+def get_support_email() -> str:
+    env_email = os.getenv("SUPPORT_EMAIL")
+    if env_email:
+        return env_email
+    return SUPPORT_EMAIL
+
+
 def build_paid_hint(text: str) -> str | None:
     hints = ["3枚", "３枚", "三枚", "3card", "3 カード", "ヘキサ", "ケルト", "十字", "7枚", "７枚", "10枚", "１０枚"]
     if any(hint in text for hint in hints):
@@ -327,29 +331,38 @@ TERMS_CALLBACK_SHOW = "terms:show"
 TERMS_CALLBACK_AGREE = "terms:agree"
 TERMS_CALLBACK_AGREE_AND_BUY = "terms:agree_buy"
 
-TERMS_TEXT = (
-    "利用規約（抜粋）\n"
-    "・18歳以上の自己責任で利用してください。\n"
-    "・医療/法律/投資など専門判断は提供しません。\n"
-    "・迷惑行為・違法行為への利用は禁止です。\n"
-    "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
-    f"・連絡先: {SUPPORT_EMAIL}\n\n"
-    "購入前に上記へ同意してください。"
-)
 
-SUPPORT_TEXT = (
-    "お問い合わせ窓口です。\n"
-    f"・購入者サポート: {SUPPORT_EMAIL}\n"
-    "・一般問い合わせ: Telegram @akolasia_support\n"
-    "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
-)
+def get_terms_text() -> str:
+    support_email = get_support_email()
+    return (
+        "利用規約（抜粋）\n"
+        "・18歳以上の自己責任で利用してください。\n"
+        "・医療/法律/投資など専門判断は提供しません。\n"
+        "・迷惑行為・違法行為への利用は禁止です。\n"
+        "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
+        f"・連絡先: {support_email}\n\n"
+        "購入前に上記へ同意してください。"
+    )
 
-PAY_SUPPORT_TEXT = (
-    "決済トラブルの対応フローです。\n"
-    "1) 次の情報をお知らせください：購入日時、SKU、telegram_payment_charge_id（分かれば）、スクショ\n"
-    "2) 調査のうえ、必要に応じて返金します。\n"
-    f"連絡先: {SUPPORT_EMAIL}"
-)
+
+def get_support_text() -> str:
+    support_email = get_support_email()
+    return (
+        "お問い合わせ窓口です。\n"
+        f"・購入者サポート: {support_email}\n"
+        "・一般問い合わせ: Telegram @akolasia_support\n"
+        "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
+    )
+
+
+def get_pay_support_text() -> str:
+    support_email = get_support_email()
+    return (
+        "決済トラブルの対応フローです。\n"
+        "1) 次の情報をお知らせください：購入日時、SKU、telegram_payment_charge_id（分かれば）、スクショ\n"
+        "2) 調査のうえ、必要に応じて返金します。\n"
+        f"連絡先: {support_email}"
+    )
 
 TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意の上でお進みください。"
 
@@ -418,7 +431,7 @@ async def cmd_terms(message: Message) -> None:
         return
 
     await message.answer(
-        TERMS_TEXT, reply_markup=build_terms_keyboard(include_buy_option=True)
+        get_terms_text(), reply_markup=build_terms_keyboard(include_buy_option=True)
     )
 
 
@@ -427,7 +440,7 @@ async def handle_terms_show(query: CallbackQuery):
     await query.answer()
     if query.message:
         await query.message.answer(
-            TERMS_TEXT, reply_markup=build_terms_prompt_keyboard()
+            get_terms_text(), reply_markup=build_terms_prompt_keyboard()
         )
 
 
@@ -462,12 +475,12 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
 
 @dp.message(Command("support"))
 async def cmd_support(message: Message) -> None:
-    await message.answer(SUPPORT_TEXT)
+    await message.answer(get_support_text())
 
 
 @dp.message(Command("paysupport"))
 async def cmd_pay_support(message: Message) -> None:
-    await message.answer(PAY_SUPPORT_TEXT)
+    await message.answer(get_pay_support_text())
 
 
 @dp.message(Command("buy"))

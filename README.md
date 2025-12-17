@@ -10,7 +10,8 @@ pip install -r requirements.txt
 
 ### 主な環境変数
 
-- `SUPPORT_EMAIL`: 利用規約やサポート案内に表示するメールアドレス。未設定時は `hasegawaarisa1@gmail.com` が使われます。
+- `.env.example` を `.env` にコピーして値を埋めてください。
+- `SUPPORT_EMAIL`: 利用規約やサポート案内に表示するメールアドレス。未設定時は `hasegawaarisa1@gmail.com` が使われますが、ダミー表記を避けるため環境変数で上書きする運用を推奨します。
 
 ## 開発環境での起動方法
 
