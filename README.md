@@ -14,6 +14,21 @@ pip install -r requirements.txt
 - `.env.example` を `.env` にコピーして値を埋めてください。
 - `SUPPORT_EMAIL`: 利用規約やサポート案内に表示するメールアドレス。未設定時は `hasegawaarisa1@gmail.com` が使われますが、ダミー表記を避けるため環境変数で上書きする運用を推奨します。
 
+### 管理者ID（ADMIN_USER_IDS）の設定
+
+- 管理者にしたい Telegram アカウントの **個人チャットの Chat ID** を取得します。
+  - 例: RawDataBot (`@raw_data_bot` など) で `/start` し、表示される `id` の値を控える。
+- `ADMIN_USER_IDS` はカンマ区切りで複数指定できます。
+  - 例: `1357890414,123456789`
+- PowerShell での起動例:
+
+  ```powershell
+  cd "...\telegram-tarot-bot"
+  .\.venv\Scripts\Activate.ps1
+  $env:ADMIN_USER_IDS="1357890414"
+  python -m bot.main
+  ```
+
 ## 開発環境での起動方法
 
 - Bot 起動: `python -m bot.main`
@@ -57,6 +72,11 @@ read3 - 3枚引き
 hexa - ヘキサグラム（7枚）
 celtic - ケルト十字（10枚）
 ```
+
+## よくあるエラー（Troubleshooting）
+
+- `TelegramConflictError: terminated by other getUpdates request` が出る場合は、**同じ BOT トークンで polling が二重起動している**（または webhook と競合している）ことが多いです。
+  - 対処: 旧プロセスを停止し、polling 運用では `deleteWebhook` を実行してから、同時に1インスタンスだけ起動するようにしてください。
 
 ## タロットロジックの内部構造
 

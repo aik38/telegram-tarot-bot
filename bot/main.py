@@ -842,6 +842,7 @@ async def handle_tarot_reading(
         extra={
             "mode": "tarot",
             "user_id": message.from_user.id if message.from_user else None,
+            "admin_mode": is_admin_user(message.from_user.id if message.from_user else None),
             "text_preview": _preview_text(user_query),
         },
     )
@@ -981,6 +982,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         extra={
             "mode": "chat",
             "user_id": message.from_user.id if message.from_user else None,
+            "admin_mode": admin_mode,
             "text_preview": _preview_text(user_query),
         },
     )
@@ -1010,6 +1012,16 @@ async def handle_message(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     admin_mode = is_admin_user(user_id)
     user: UserRecord | None = None
+
+    logger.info(
+        "Received message",
+        extra={
+            "mode": "router",
+            "user_id": user_id,
+            "admin_mode": admin_mode,
+            "text_preview": _preview_text(text),
+        },
+    )
 
     if text.startswith("/start"):
         return
@@ -1089,7 +1101,15 @@ async def handle_message(message: Message) -> None:
 
 async def main() -> None:
     setup_logging()
-    logger.info("Starting akolasia_tarot_bot")
+    logger.info(
+        "Starting akolasia_tarot_bot",
+        extra={
+            "mode": "startup",
+            "admin_ids_count": len(ADMIN_USER_IDS),
+            "paywall_enabled": PAYWALL_ENABLED,
+            "polling": True,
+        },
+    )
     await dp.start_polling(bot)
 
 
