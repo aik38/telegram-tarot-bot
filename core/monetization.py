@@ -43,6 +43,9 @@ def is_premium_user(user_id: int | None, *, now: datetime | None = None) -> bool
     if user_id is None:
         return False
 
+    if user_id in ADMIN_USER_IDS:
+        return True
+
     if user_id in PREMIUM_USER_IDS:
         return True
 

@@ -4,7 +4,12 @@ import logging
 import os
 import random
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 from typing import Iterable
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
@@ -223,7 +228,8 @@ def _evaluate_one_oracle_access(
     *, user: UserRecord, user_id: int, now: datetime
 ) -> tuple[bool, bool, UserRecord]:
     latest_user = get_user(user_id, now=now) or user
-    has_pass = is_premium_user(user_id, now=now)
+    is_admin = is_admin_user(user_id)
+    has_pass = is_premium_user(user_id, now=now) or is_admin
     date_key = _usage_today(now).isoformat()
     memory_key = (user_id, date_key)
     base_count = ONE_ORACLE_MEMORY.get(memory_key, latest_user.one_oracle_count_today)
@@ -233,6 +239,9 @@ def _evaluate_one_oracle_access(
         if _is_in_general_chat_trial(latest_user, now)
         else FREE_ONE_ORACLE_POST_TRIAL_PER_DAY
     )
+
+    if is_admin:
+        return True, False, latest_user
 
     if not has_pass and base_count >= limit:
         return False, False, latest_user
@@ -334,7 +343,7 @@ def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
 def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     now = now or utcnow()
     pass_until = user.pass_until or user.premium_until
-    has_pass = has_active_pass(user.user_id, now=now)
+    has_pass = has_active_pass(user.user_id, now=now) or is_admin_user(user.user_id)
     status_title = "現在のご利用状況です。"
     if is_admin_user(user.user_id):
         status_title = "現在のご利用状況（管理者モード）です。"
@@ -955,10 +964,10 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     admin_mode = is_admin_user(user_id)
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
 
-    if user is not None and not admin_mode:
+    if user is not None:
         trial_active = _is_in_general_chat_trial(user, now)
         out_of_quota = user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY
-        has_pass = has_active_pass(user_id, now=now)
+        has_pass = has_active_pass(user_id, now=now) or admin_mode
 
         if (trial_active and out_of_quota) or (not trial_active and not has_pass):
             if not consult_intent:
@@ -1051,7 +1060,6 @@ async def handle_message(message: Message) -> None:
             spread_from_command == ONE_CARD
             and user_id is not None
             and user is not None
-            and not admin_mode
         ):
             allowed, short_response, user = _evaluate_one_oracle_access(
                 user=user, user_id=user_id, now=now
@@ -1076,16 +1084,15 @@ async def handle_message(message: Message) -> None:
         short_response = False
         if user_id is not None:
             user = ensure_user(user_id, now=now)
-            if not admin_mode:
-                allowed, short_response, user = _evaluate_one_oracle_access(
-                    user=user, user_id=user_id, now=now
+            allowed, short_response, user = _evaluate_one_oracle_access(
+                user=user, user_id=user_id, now=now
+            )
+            if not allowed:
+                await message.answer(
+                    "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
+                    "複数枚スプレッドやパスは /buy からご利用いただけます。",
                 )
-                if not allowed:
-                    await message.answer(
-                        "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
-                        "複数枚スプレッドやパスは /buy からご利用いただけます。",
-                    )
-                    return
+                return
         else:
             user = None
         guidance_note = build_paid_hint(text)
