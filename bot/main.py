@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import random
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Iterable
 
 from aiogram import Bot, Dispatcher, F
@@ -43,6 +43,7 @@ from core.db import (
     log_payment,
     mark_payment_refunded,
     set_terms_accepted,
+    USAGE_TIMEZONE,
 )
 from core.monetization import (
     ADMIN_USER_IDS,
@@ -72,10 +73,21 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
 
-FREE_ONE_ORACLE_PER_DAY = 2
+FREE_ONE_ORACLE_TRIAL_PER_DAY = 2
+FREE_ONE_ORACLE_POST_TRIAL_PER_DAY = 1
 FREE_GENERAL_CHAT_PER_DAY = 2
 FREE_GENERAL_CHAT_DAYS = 5
 ONE_ORACLE_MEMORY: dict[tuple[int, str], int] = {}
+IMAGE_ADDON_ENABLED = os.getenv("IMAGE_ADDON_ENABLED", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _usage_today(now: datetime) -> datetime.date:
+    return now.astimezone(USAGE_TIMEZONE).date()
 
 
 def utcnow() -> datetime:
@@ -190,7 +202,11 @@ SHORT_TAROT_OUTPUT_RULES = [
 
 
 def _days_since_first_seen(user: UserRecord, now: datetime) -> int:
-    return (now.date() - user.first_seen.date()).days
+    return (_usage_today(now) - _usage_today(user.first_seen)).days
+
+
+def _trial_day_number(user: UserRecord, now: datetime) -> int:
+    return _days_since_first_seen(user, now) + 1
 
 
 def _general_chat_trial_days_left(user: UserRecord, now: datetime) -> int:
@@ -207,17 +223,23 @@ def _evaluate_one_oracle_access(
 ) -> tuple[bool, bool, UserRecord]:
     latest_user = get_user(user_id, now=now) or user
     has_pass = is_premium_user(user_id, now=now)
-    date_key = now.date().isoformat()
+    date_key = _usage_today(now).isoformat()
     memory_key = (user_id, date_key)
     base_count = ONE_ORACLE_MEMORY.get(memory_key, latest_user.one_oracle_count_today)
 
-    if not has_pass and base_count >= FREE_ONE_ORACLE_PER_DAY:
+    limit = (
+        FREE_ONE_ORACLE_TRIAL_PER_DAY
+        if _is_in_general_chat_trial(latest_user, now)
+        else FREE_ONE_ORACLE_POST_TRIAL_PER_DAY
+    )
+
+    if not has_pass and base_count >= limit:
         return False, False, latest_user
 
     new_count = base_count + 1
     ONE_ORACLE_MEMORY[memory_key] = new_count
     updated_user = increment_one_oracle_count(user_id, now=now)
-    short_response = not has_pass and new_count <= FREE_ONE_ORACLE_PER_DAY
+    short_response = not has_pass and new_count <= limit
     return True, short_response, updated_user
 
 
@@ -269,15 +291,19 @@ def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です🌿\n"
-        "占いは1枚引きが1日2回まで無料（ショート版）。深掘りはコマンドでどうぞ。\n"
-        "雑談・相談は初回5日間だけ1日2通まで無料、6日目以降はパスで解放できます。\n\n"
-        "【占いの使い方】\n"
-        "/read1 または『〇〇 占って』で1枚（無料枠はショート回答）\n"
-        "/read3 /hexa /celtic で3・7・10枚スプレッド\n"
-        "恋愛専用：/love1 /love3\n\n"
+        "無料でお試しいただける回数と、パスで解放される相談チャットをご案内します。\n\n"
+        "【タロット占い】\n"
+        "・ワンオラクル：/read1 または『〇〇 占って』で1枚（初回5日間は1日2回、6日目以降は1日1回無料。無料分はショート回答）\n"
+        "・複数枚スプレッド：/read3 /hexa /celtic（有料）\n"
+        "・恋愛専用：/love1 /love3\n"
+        "・『〇〇 占って』でワンオラクルへお任せいただけます。\n\n"
+        "【相談チャット】\n"
+        "・メッセージ先頭に『相談:』と添えるとスムーズです。\n"
+        "・初回5日間は1日2通まで無料でご相談いただけます。\n"
+        "・6日目以降は7日/30日パスご購入で回数無制限になります。\n\n"
         "【購入・確認】\n"
-        "/buy    メニューとStars決済\n"
-        "/status 残高・無料枠・パス期限\n\n"
+        "/buy    おすすめメニューとStars決済（相談したい方はパスがおすすめ）\n"
+        "/status trial日数・無料残数・パス期限を確認\n\n"
         "【サポートと規約】\n"
         "/terms      利用規約\n"
         "/support    お問い合わせ\n"
@@ -288,11 +314,10 @@ def get_start_text() -> str:
 
 def get_store_intro_text() -> str:
     return (
-        "ご利用ありがとうございます。必要に合うものをお選びください。\n"
-        "・3枚：まず状況を整理したい方向け\n"
-        "・7枚/10枚：深掘りしたいときに\n"
-        "・パス：毎日占いや雑談を使う方向け\n"
-        "Stars (XTR) 決済に対応しています。"
+        "ご利用ありがとうございます。お悩みに合わせてお選びください。\n"
+        "・迷ったら：3枚かケルト十字でじっくり整理\n"
+        "・相談重視：7日/30日パスで相談チャットを解放\n"
+        "・決済はTelegram Stars (XTR) です。ゆっくりお進みください。"
     )
 
 
@@ -306,33 +331,53 @@ def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
 def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     now = now or utcnow()
     pass_until = user.pass_until or user.premium_until
-    pass_label = pass_until.isoformat(sep=" ") if pass_until else "なし"
-    one_remaining = max(FREE_ONE_ORACLE_PER_DAY - user.one_oracle_count_today, 0)
     has_pass = has_active_pass(user.user_id, now=now)
     trial_days_left = _general_chat_trial_days_left(user, now)
+    trial_day = _trial_day_number(user, now)
     general_remaining = max(
         FREE_GENERAL_CHAT_PER_DAY - user.general_chat_count_today, 0
     )
+    one_oracle_limit = (
+        FREE_ONE_ORACLE_TRIAL_PER_DAY
+        if _is_in_general_chat_trial(user, now)
+        else FREE_ONE_ORACLE_POST_TRIAL_PER_DAY
+    )
+    one_remaining = max(one_oracle_limit - user.one_oracle_count_today, 0)
 
     general_line: str
     if has_pass:
-        general_line = "パス有効中：雑談/相談はいつでもどうぞ。"
+        general_line = "パス有効中：相談チャットは回数無制限でご利用いただけます。"
     elif trial_days_left > 0:
         general_line = (
-            f"無料期間あと{trial_days_left}日（本日の残り {general_remaining} 通）"
+            f"trialあと{trial_days_left}日（今日の残り {general_remaining} 通）"
+            "\n・6日目以降はパス限定になります。"
         )
     else:
-        general_line = "無料期間終了：パス購入で雑談が解放されます。"
+        general_line = "パス未購入のため相談チャットは利用できません。/buy でご検討ください。"
+
+    pass_label: str
+    if pass_until:
+        remaining_days = (_usage_today(pass_until) - _usage_today(now)).days
+        remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
+        pass_label = f"{pass_until.astimezone(USAGE_TIMEZONE).strftime('%Y-%m-%d %H:%M JST')} {remaining_hint}"
+    else:
+        pass_label = "なし"
+
+    next_reset = datetime.combine(
+        _usage_today(now) + timedelta(days=1), time(0, 0), tzinfo=USAGE_TIMEZONE
+    )
 
     return (
         "現在のご利用状況です。\n"
+        f"・trial: 初回利用から{trial_day}日目\n"
         f"・パス有効期限: {pass_label}\n"
-        f"・1枚引き無料枠: 残り {one_remaining} 回/日（無料分はショート回答）\n"
-        f"・雑談/相談: {general_line}\n"
+        f"・ワンオラクル無料枠: 1日{one_oracle_limit}回（本日の残り {one_remaining} 回）\n"
+        f"・相談チャット: {general_line}\n"
         f"・3枚チケット: {user.tickets_3}枚\n"
         f"・7枚チケット: {user.tickets_7}枚\n"
         f"・10枚チケット: {user.tickets_10}枚\n"
-        f"・画像オプション: {'有効' if user.images_enabled else '無効'}"
+        f"・画像オプション: {'有効' if user.images_enabled else '無効'}\n"
+        f"・次回リセット: {next_reset.strftime('%m/%d %H:%M JST')}"
     )
 
 
@@ -517,6 +562,16 @@ def build_terms_prompt_keyboard() -> InlineKeyboardMarkup:
 def build_store_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for product in iter_products():
+        if product.sku == "ADDON_IMAGES" and not IMAGE_ADDON_ENABLED:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="画像追加オプション（準備中）",
+                        callback_data="addon:pending",
+                    )
+                ]
+            )
+            continue
         rows.append(
             [
                 InlineKeyboardButton(
@@ -646,6 +701,9 @@ async def handle_buy_callback(query: CallbackQuery):
         return
 
     ensure_user(user_id)
+    if product.sku == "ADDON_IMAGES" and not IMAGE_ADDON_ENABLED:
+        await query.answer("画像追加オプションは準備中です。リリースまでお待ちください。", show_alert=True)
+        return
     if not has_accepted_terms(user_id):
         await query.answer(TERMS_PROMPT_BEFORE_BUY, show_alert=True)
         if query.message:
@@ -667,6 +725,11 @@ async def handle_buy_callback(query: CallbackQuery):
             prices=prices,
         )
     await query.answer("お支払い画面を開きます。ゆっくり進めてくださいね。")
+
+
+@dp.callback_query(F.data == "addon:pending")
+async def handle_addon_pending(query: CallbackQuery):
+    await query.answer("画像追加オプションは準備中です。もう少しお待ちください。", show_alert=True)
 
 
 @dp.pre_checkout_query()
@@ -844,12 +907,13 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         if _is_in_general_chat_trial(user, now):
             if user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY:
                 await message.answer(
-                    "今日の雑談無料枠（2通）は使い切りました。/buy で7日/30日パスを購入すると回数無制限で相談できます。"
+                    "trial中の相談チャット無料枠（1日2通）は本日分を使い切りました。\n"
+                    "/buy から7日/30日パスを購入すると回数無制限でご利用いただけます。"
                 )
                 return
         elif not has_active_pass(user_id, now=now):
             await message.answer(
-                "6日目以降の雑談/相談はパス専用です。/buy から7日または30日のパスをご検討ください。"
+                "6日目以降の相談チャットはパス専用です。/buy から7日または30日のパスをご検討ください。"
             )
             return
 
@@ -919,7 +983,8 @@ async def handle_message(message: Message) -> None:
             )
             if not allowed:
                 await message.answer(
-                    "1枚引きの無料枠（1日2回）は使い切りました。/buy でパスや複数枚スプレッドをご検討ください。"
+                    "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
+                    "複数枚スプレッドやパスは /buy からご利用いただけます。"
                 )
                 return
 
@@ -941,7 +1006,8 @@ async def handle_message(message: Message) -> None:
             )
             if not allowed:
                 await message.answer(
-                    "1枚引きの無料枠（1日2回）は使い切りました。/buy でパスや複数枚スプレッドをご検討ください。"
+                    "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
+                    "複数枚スプレッドやパスは /buy からご利用いただけます。"
                 )
                 return
         else:
