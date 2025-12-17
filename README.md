@@ -1,6 +1,7 @@
 # Telegram Tarot Bot
 
 Telegram向けタロット占いボットのミニマルな開発用セットアップです。
+価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md` を参照してください。
 
 ## インストール
 

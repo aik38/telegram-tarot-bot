@@ -129,7 +129,8 @@ def test_start_message_shorter(monkeypatch, tmp_path):
     asyncio.run(bot_main.cmd_start(message))
 
     assert message.answers
-    assert "【占いの始め方】" in message.answers[0]
+    assert "【すぐ占う（カード確定）】" in message.answers[0]
+    assert "【自由入力でもOK】" in message.answers[0]
     assert "/read1" in message.answers[0]
     assert "/read3" in message.answers[0]
     assert "恋愛専用" not in message.answers[0]
@@ -238,7 +239,7 @@ def test_agree_and_buy_callback_opens_store(monkeypatch, tmp_path):
     user = bot_main.get_user(user_id)
     assert bot_main.has_accepted_terms(user_id)
     assert user is not None
-    assert any("ご希望の商品" in ans for ans in message.answers)
+    assert any("ご希望のメニュー" in ans for ans in message.answers)
 
 
 def test_successful_payment_not_double_granted(monkeypatch, tmp_path):

@@ -195,6 +195,10 @@ def is_admin_user(user_id: int | None) -> bool:
     return user_id is not None and user_id in ADMIN_USER_IDS
 
 
+def get_bot_display_name() -> str:
+    return "akolasia_tarot_bot"
+
+
 def get_support_email() -> str:
     env_email = os.getenv("SUPPORT_EMAIL")
     if env_email:
@@ -207,6 +211,40 @@ def build_paid_hint(text: str) -> str | None:
     if any(hint in text for hint in hints):
         return "複数枚はコマンド指定です：/read3 /hexa /celtic（無料は『占って』で1枚）"
     return None
+
+
+def get_start_text() -> str:
+    bot_name = get_bot_display_name()
+    return (
+        f"こんにちは、AIタロット占いボット {bot_name} です🌿\n"
+        "恋愛・仕事・お金・気分のモヤモヤまで、気軽にどうぞ。\n\n"
+        "【すぐ占う（カード確定）】\n"
+        "/read1  1枚引き（まずはここ）\n"
+        "/read3  3枚スプレッド\n"
+        "/hexa   ヘキサグラム（7枚）\n"
+        "/celtic ケルト十字（10枚）\n"
+        "/love1 /love3  恋愛スプレッド\n\n"
+        "【自由入力でもOK】\n"
+        "文章の最後に「占って」を付けるだけで1枚引きます。\n"
+        "例：『彼から連絡きますか？占って』\n"
+        "※カードなしの相談だけでも気軽に送ってください。\n\n"
+        "【購入・確認】\n"
+        "/buy    有料メニュー（Stars）\n"
+        "/status 利用状況の確認\n\n"
+        "【大事な案内】\n"
+        "/terms      利用規約\n"
+        "/support    お問い合わせ\n"
+        "/paysupport 決済トラブル\n"
+        "医療・法律・投資は専門家にご相談ください。"
+    )
+
+
+def get_store_intro_text() -> str:
+    return (
+        "ご利用ありがとうございます。ご希望のメニューを選んでください。\n"
+        "迷ったら3枚スプレッドがおすすめです（状況整理に向いています）。\n"
+        "Stars (XTR) 決済に対応しています。"
+    )
 
 
 def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
@@ -358,9 +396,12 @@ def get_support_text() -> str:
 def get_pay_support_text() -> str:
     support_email = get_support_email()
     return (
-        "決済トラブルの対応フローです。\n"
-        "1) 次の情報をお知らせください：購入日時、SKU、telegram_payment_charge_id（分かれば）、スクショ\n"
-        "2) 調査のうえ、必要に応じて返金します。\n"
+        "決済トラブルの受付です。下記を分かる範囲でお知らせください。\n"
+        "1) 購入日時\n"
+        "2) 商品名（SKUが分かればSKU）\n"
+        "3) telegram_payment_charge_id（表示される場合）\n"
+        "4) スクリーンショット\n"
+        "確認のうえ、必要に応じて返金／付与対応します。\n"
         f"連絡先: {support_email}"
     )
 
@@ -412,9 +453,7 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
 
 async def send_store_menu(message: Message) -> None:
     await message.answer(
-        "ご利用ありがとうございます。ご希望の商品を選んでください。\n"
-        "Stars (XTR) 決済に対応しています。",
-        reply_markup=build_store_keyboard(),
+        get_store_intro_text(), reply_markup=build_store_keyboard()
     )
 
 
@@ -512,24 +551,7 @@ async def cmd_status(message: Message) -> None:
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    await message.answer(
-        "こんにちは、AIタロット占いボット akolasia_tarot_bot です🌿\n"
-        "恋愛・仕事・お金・気分のモヤモヤまで、気軽に話してください。\n\n"
-        "【占いの始め方】\n"
-        "・/read1：1枚引き（『占って』でもOK）\n"
-        "・/read3：3枚引き\n"
-        "・/hexa：ヘキサグラム（7枚）\n"
-        "・/celtic：ケルト十字（10枚）\n"
-        "・/love1 /love3：旧コマンド（互換）\n\n"
-        "【購入・確認】\n"
-        "・/buy：有料メニュー購入（Stars）\n"
-        "・/status：利用状況の確認\n\n"
-        "【大事な案内】\n"
-        "・/terms：利用規約\n"
-        "・/support：お問い合わせ\n"
-        "・/paysupport：決済トラブル\n\n"
-        "医療・法律・投資は専門家へ。占いは心の整理のヒントで、結果を保証するものではありません。",
-    )
+    await message.answer(get_start_text())
 
 
 @dp.callback_query(F.data.startswith("buy:"))
