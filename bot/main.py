@@ -42,7 +42,6 @@ from core.db import (
     get_user,
     grant_purchase,
     has_accepted_terms,
-    has_active_pass,
     increment_general_chat_count,
     increment_one_oracle_count,
     log_payment,
@@ -51,7 +50,12 @@ from core.db import (
     set_last_general_chat_block_notice,
     USAGE_TIMEZONE,
 )
-from core.monetization import PAYWALL_ENABLED, get_user_with_default, is_premium_user
+from core.monetization import (
+    PAYWALL_ENABLED,
+    effective_has_pass,
+    effective_pass_expires_at,
+    get_user_with_default,
+)
 from core.logging import setup_logging
 from core.prompts import CHAT_SYSTEM_PROMPT, TAROT_OUTPUT_RULES, TAROT_SYSTEM_PROMPT
 from core.tarot import (
@@ -229,7 +233,7 @@ def _evaluate_one_oracle_access(
 ) -> tuple[bool, bool, UserRecord]:
     latest_user = get_user(user_id, now=now) or user
     is_admin = is_admin_user(user_id)
-    has_pass = is_premium_user(user_id, now=now) or is_admin
+    has_pass = effective_has_pass(user_id, latest_user, now=now)
     date_key = _usage_today(now).isoformat()
     memory_key = (user_id, date_key)
     base_count = ONE_ORACLE_MEMORY.get(memory_key, latest_user.one_oracle_count_today)
@@ -342,8 +346,8 @@ def consume_ticket_for_spread(user_id: int, spread: Spread) -> bool:
 
 def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     now = now or utcnow()
-    pass_until = user.pass_until or user.premium_until
-    has_pass = has_active_pass(user.user_id, now=now) or is_admin_user(user.user_id)
+    pass_until = effective_pass_expires_at(user.user_id, user, now)
+    has_pass = effective_has_pass(user.user_id, user, now=now)
     status_title = "現在のご利用状況です。"
     if is_admin_user(user.user_id):
         status_title = "現在のご利用状況（管理者モード）です。"
@@ -375,6 +379,8 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
         remaining_days = (_usage_today(pass_until) - _usage_today(now)).days
         remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
         pass_label = f"{pass_until.astimezone(USAGE_TIMEZONE).strftime('%Y-%m-%d %H:%M JST')} {remaining_hint}"
+        if is_admin_user(user.user_id):
+            pass_label = f"{pass_label}（管理者）"
     else:
         pass_label = "なし"
 
@@ -967,7 +973,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     if user is not None:
         trial_active = _is_in_general_chat_trial(user, now)
         out_of_quota = user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY
-        has_pass = has_active_pass(user_id, now=now) or admin_mode
+        has_pass = effective_has_pass(user_id, user, now=now)
 
         if (trial_active and out_of_quota) or (not trial_active and not has_pass):
             if not consult_intent:
@@ -1048,7 +1054,7 @@ async def handle_message(message: Message) -> None:
             user = ensure_user(user_id, now=now)
 
         if PAYWALL_ENABLED and is_paid_spread(spread_from_command):
-            if not is_premium_user(user_id, now=now):
+            if not effective_has_pass(user_id, user, now=now):
                 if user_id is None or not consume_ticket_for_spread(user_id, spread_from_command):
                     await message.answer(
                         "こちらは有料メニューです。\n"
