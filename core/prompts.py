@@ -24,3 +24,18 @@ TAROT_SYSTEM_PROMPT = (
     "- 恋愛を中心に、質問に沿った形で丁寧に読み解きます。\n"
     "- 断定を避け、希望を持てる表現で寄り添ってください。"
 )
+
+TAROT_THEME_HINTS: dict[str, str] = {
+    "love": "恋愛の気持ちや距離感、コミュニケーションの提案に焦点を当てます。断定は避け、優しく示唆してください。",
+    "marriage": "結婚・価値観・生活設計の現実的な視点を踏まえ、穏やかに方向性を示します。断定は避けてください。",
+    "work": "仕事・キャリアの意思決定や対人調整、優先順位付けに寄り添います。評価は控えめに具体的な提案をしてください。",
+    "life": "人生全体の方針や内省を促し、希望が持てる形で整理してください。断定は避け、穏やかに励ましてください。",
+}
+
+
+def get_tarot_system_prompt(theme: str | None) -> str:
+    base = TAROT_SYSTEM_PROMPT
+    hint = TAROT_THEME_HINTS.get(theme or "", "")
+    if hint:
+        return f"{base}\n- テーマ: {hint}"
+    return base
