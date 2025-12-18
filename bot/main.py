@@ -97,7 +97,7 @@ IMAGE_ADDON_ENABLED = os.getenv("IMAGE_ADDON_ENABLED", "false").strip().lower() 
 }
 NON_CONSULT_OUT_OF_QUOTA_MESSAGE = (
     "このボットはタロット占い・相談用です。占いは /read1、恋愛は /love1 などをご利用"
-    "ください。購入は /buy です。"
+    "ください。チャージは /buy です。"
 )
 GENERAL_CHAT_BLOCK_NOTICE_COOLDOWN = timedelta(hours=1)
 
@@ -105,6 +105,31 @@ USER_MODE: dict[int, str] = {}
 TAROT_FLOW: dict[int, str | None] = {}
 TAROT_THEME: dict[int, str] = {}
 DEFAULT_THEME = "life"
+
+TAROT_THEME_LABELS: dict[str, str] = {
+    "love": "恋愛",
+    "marriage": "結婚",
+    "work": "仕事",
+    "life": "人生",
+}
+
+TAROT_THEME_PROMPT = "🎩占いモードです。まずテーマを選んでください👇（恋愛/結婚/仕事/人生）"
+TAROT_THEME_SELECTED_PROMPT = (
+    "✅テーマ：{theme_label}。占いたいことを1つ送ってください。例『来月の仕事運は？』"
+)
+CONSULT_MODE_PROMPT = (
+    "💬相談モードです。状況→気持ち→どうなりたいか、の順で送るとスムーズです（長文OK）。"
+)
+CHARGE_MODE_PROMPT = (
+    "🛒チャージです。チケット/パスを選んでください（Telegram Stars決済）。購入後は🎩占いに戻れます。"
+)
+STATUS_MODE_PROMPT = "📊現在のご利用状況です。"
+
+
+def build_tarot_question_prompt(theme: str) -> str:
+    return TAROT_THEME_SELECTED_PROMPT.format(
+        theme_label=get_tarot_theme_label(theme)
+    )
 
 
 def _usage_today(now: datetime) -> datetime.date:
@@ -231,11 +256,22 @@ def reset_tarot_state(user_id: int | None) -> None:
     TAROT_THEME.pop(user_id, None)
 
 
+def get_tarot_theme_label(theme: str) -> str:
+    return TAROT_THEME_LABELS.get(theme, TAROT_THEME_LABELS[DEFAULT_THEME])
+
+
+def format_next_reset(now: datetime) -> str:
+    next_reset = datetime.combine(
+        _usage_today(now) + timedelta(days=1), time(0, 0), tzinfo=USAGE_TIMEZONE
+    )
+    return next_reset.strftime("%m/%d %H:%M JST")
+
+
 def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔮占い"), KeyboardButton(text="💬相談")],
-            [KeyboardButton(text="🛒購入"), KeyboardButton(text="📊ステータス")],
+            [KeyboardButton(text="🎩占い"), KeyboardButton(text="💬相談")],
+            [KeyboardButton(text="🛒チャージ"), KeyboardButton(text="📊ステータス")],
         ],
         is_persistent=True,
         resize_keyboard=True,
@@ -251,6 +287,42 @@ def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🌿人生", callback_data="tarot_theme:life")],
         ]
     )
+
+
+async def prompt_tarot_mode(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "tarot")
+    set_tarot_theme(user_id, DEFAULT_THEME)
+    set_tarot_flow(user_id, "awaiting_theme")
+    await message.answer(TAROT_THEME_PROMPT, reply_markup=main_menu_kb())
+    await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
+
+
+async def prompt_consult_mode(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "consult")
+    reset_tarot_state(user_id)
+    await message.answer(CONSULT_MODE_PROMPT, reply_markup=main_menu_kb())
+
+
+async def prompt_charge_menu(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "charge")
+    await message.answer(CHARGE_MODE_PROMPT, reply_markup=main_menu_kb())
+    await send_store_menu(message)
+
+
+async def prompt_status(message: Message, *, now: datetime) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "status")
+    if user_id is None:
+        await message.answer(
+            "ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。",
+            reply_markup=main_menu_kb(),
+        )
+        return
+    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
+    await message.answer(format_status(user, now=now), reply_markup=main_menu_kb())
 
 
 COMMAND_SPREAD_MAP: dict[str, Spread] = {
@@ -321,8 +393,8 @@ def _evaluate_one_oracle_access(
     if is_admin:
         return True, False, latest_user
 
-    if not has_pass and base_count >= limit:
-        return False, False, latest_user
+        if not has_pass and base_count >= limit:
+            return False, False, latest_user
 
     new_count = base_count + 1
     ONE_ORACLE_MEMORY[memory_key] = new_count
@@ -395,26 +467,27 @@ async def execute_tarot_request(
             allowed, short_response, user = _evaluate_one_oracle_access(
                 user=user, user_id=user_id, now=now
             )
-            if not allowed:
-                paywall_triggered = True
-                await message.answer(
-                    "ワンオラクルの無料枠は本日分を使い切りました（trial中:1日2回 / 6日目以降:1日1回）。"
-                    "複数枚スプレッドやパスは /buy からご利用いただけます。",
-                )
-                logger.info(
-                    "Tarot request blocked",
-                    extra={
-                        "mode": "tarot",
-                        "user_id": user_id,
-                        "admin_mode": is_admin_user(user_id),
-                        "text_preview": _preview_text(user_query),
-                        "route": "tarot",
-                        "tarot_flow": TAROT_FLOW.get(user_id),
-                        "tarot_theme": theme or get_tarot_theme(user_id),
-                        "paywall_triggered": paywall_triggered,
-                    },
-                )
-                return
+    if not allowed:
+        paywall_triggered = True
+        await message.answer(
+            "本日の無料占いは使い切りました。続けるには🛒チャージから"
+            "チケット/パスを選んでください。次回リセット: "
+            f"{format_next_reset(now)}",
+        )
+        logger.info(
+            "Tarot request blocked",
+            extra={
+                "mode": "tarot",
+                "user_id": user_id,
+                "admin_mode": is_admin_user(user_id),
+                "text_preview": _preview_text(user_query),
+                "route": "tarot",
+                "tarot_flow": TAROT_FLOW.get(user_id),
+                "tarot_theme": theme or get_tarot_theme(user_id),
+                "paywall_triggered": paywall_triggered,
+            },
+        )
+        return
     elif PAYWALL_ENABLED and is_paid_spread(spread_to_use):
         has_pass = effective_has_pass(user_id, user, now=now)
         if not has_pass:
@@ -466,25 +539,13 @@ async def execute_tarot_request(
 def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
-        f"こんにちは、AIタロット占いボット {bot_name} です🌿\n"
-        "無料でお試しいただける回数と、パスで解放される相談チャットをご案内します。\n\n"
-        "【タロット占い】\n"
-        "・ワンオラクル：/read1 または『〇〇 占って』で1枚（初回5日間は1日2回、6日目以降は1日1回無料。無料分はショート回答）\n"
-        "・複数枚スプレッド：/read3 /hexa /celtic（有料）\n"
-        "・恋愛専用：/love1 /love3\n"
-        "・『〇〇 占って』でワンオラクルへお任せいただけます。\n\n"
-        "【相談チャット】\n"
-        "・メッセージ先頭に『相談:』と添えるとスムーズです。\n"
-        "・初回5日間は1日2通まで無料でご相談いただけます。\n"
-        "・6日目以降は7日/30日パスご購入で回数無制限になります。\n\n"
-        "【購入・確認】\n"
-        "/buy    おすすめメニューとStars決済（相談したい方はパスがおすすめ）\n"
-        "/status trial日数・無料残数・パス期限を確認\n\n"
-        "【サポートと規約】\n"
-        "/terms      利用規約\n"
-        "/support    お問い合わせ\n"
-        "/paysupport 決済トラブル\n"
-        "医療・法律・投資は専門家にご相談ください。"
+        f"こんにちは、AIタロット占いボット {bot_name} です。\n"
+        "🎩占い：テーマ→質問を送信（無料枠あり/追加は🛒チャージ）\n"
+        "💬相談：悩みを自由に送信\n"
+        "🛒チャージ：チケット/パス購入（Stars）\n"
+        "📊ステータス：残り回数・期限・次回リセット\n"
+        "コマンド: /buy /status /terms /support\n"
+        "※医療・法律・投資は専門家へ"
     )
 
 
@@ -510,9 +571,9 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     now = now or utcnow()
     pass_until = effective_pass_expires_at(user.user_id, user, now)
     has_pass = effective_has_pass(user.user_id, user, now=now)
-    status_title = "現在のご利用状況です。"
+    status_title = STATUS_MODE_PROMPT
     if is_admin_user(user.user_id):
-        status_title = "現在のご利用状況（管理者モード）です。"
+        status_title = "📊現在のご利用状況（管理者モード）です。"
     trial_days_left = _general_chat_trial_days_left(user, now)
     trial_day = _trial_day_number(user, now)
     general_remaining = max(
@@ -546,10 +607,6 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     else:
         pass_label = "なし"
 
-    next_reset = datetime.combine(
-        _usage_today(now) + timedelta(days=1), time(0, 0), tzinfo=USAGE_TIMEZONE
-    )
-
     return (
         f"{status_title}\n"
         f"・trial: 初回利用から{trial_day}日目\n"
@@ -560,7 +617,7 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
         f"・7枚チケット: {user.tickets_7}枚\n"
         f"・10枚チケット: {user.tickets_10}枚\n"
         f"・画像オプション: {'有効' if user.images_enabled else '無効'}\n"
-        f"・次回リセット: {next_reset.strftime('%m/%d %H:%M JST')}"
+        f"・次回リセット: {format_next_reset(now)}"
     )
 
 
@@ -850,30 +907,18 @@ async def cmd_buy(message: Message) -> None:
             )
             return
 
-    await send_store_menu(message)
+    await prompt_charge_menu(message)
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else None
-    if user_id is None:
-        await message.answer("ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。")
-        return
-
     now = utcnow()
-    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
-    status = format_status(user, now=now)
-    await message.answer(status, reply_markup=main_menu_kb())
+    await prompt_status(message, now=now)
 
 
 @dp.message(Command("read1"))
 async def cmd_read1(message: Message) -> None:
-    user_id = message.from_user.id if message.from_user else None
-    set_user_mode(user_id, "tarot")
-    set_tarot_theme(user_id, DEFAULT_THEME)
-    set_tarot_flow(user_id, "awaiting_theme")
-    await message.answer("占いを始めます。テーマを選んでください。", reply_markup=main_menu_kb())
-    await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
+    await prompt_tarot_mode(message)
 
 
 @dp.message(Command("love1"))
@@ -883,7 +928,7 @@ async def cmd_love1(message: Message) -> None:
     set_tarot_theme(user_id, "love")
     set_tarot_flow(user_id, "awaiting_question")
     await message.answer(
-        "恋愛について占います。質問をどうぞ。", reply_markup=main_menu_kb()
+        build_tarot_question_prompt("love"), reply_markup=main_menu_kb()
     )
 
 
@@ -955,9 +1000,10 @@ async def handle_tarot_theme_select(query: CallbackQuery):
     set_tarot_flow(user_id, "awaiting_question")
     await query.answer("テーマを設定しました。")
     if query.message:
-        await query.message.answer(
-            "質問をどうぞ。例：『来月の仕事運は？』", reply_markup=main_menu_kb()
-        )
+        prompt_text = build_tarot_question_prompt(theme)
+        await query.message.edit_text(prompt_text)
+    elif user_id is not None:
+        await bot.send_message(user_id, build_tarot_question_prompt(theme))
 
 
 @dp.pre_checkout_query()
@@ -1059,17 +1105,6 @@ async def handle_tarot_reading(
     short_response: bool = False,
     theme: str | None = None,
 ) -> None:
-    logger.info(
-        "Handling message",
-        extra={
-            "mode": "tarot",
-            "user_id": message.from_user.id if message.from_user else None,
-            "admin_mode": is_admin_user(message.from_user.id if message.from_user else None),
-            "text_preview": _preview_text(user_query),
-            "tarot_theme": theme or get_tarot_theme(message.from_user.id if message.from_user else None),
-        },
-    )
-
     spread_to_use = spread or choose_spread(user_query)
     rng = random.Random()
     drawn = draw_cards(spread_to_use, rng=rng)
@@ -1237,7 +1272,22 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         )
 
 
-@dp.message()
+# Catch-all handler for non-command text messages
+@dp.message(
+    ~Command(
+        commands=[
+            "terms",
+            "support",
+            "paysupport",
+            "buy",
+            "status",
+            "read1",
+            "love1",
+            "refund",
+            "start",
+        ]
+    )
+)
 async def handle_message(message: Message) -> None:
     text = (message.text or "").strip()
     now = utcnow()
@@ -1261,9 +1311,6 @@ async def handle_message(message: Message) -> None:
         },
     )
 
-    if text.startswith("/start"):
-        return
-
     if not text:
         await message.answer(
             "気になることをもう少し詳しく教えてくれるとうれしいです。",
@@ -1271,59 +1318,34 @@ async def handle_message(message: Message) -> None:
         )
         return
 
-    if text == "🔮占い":
-        set_user_mode(user_id, "tarot")
-        set_tarot_theme(user_id, DEFAULT_THEME)
-        set_tarot_flow(user_id, "awaiting_theme")
-        await message.answer(
-            "占いモードに切り替えました。テーマを選んでください。",
-            reply_markup=main_menu_kb(),
-        )
-        await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
+    if text == "🎩占い":
+        await prompt_tarot_mode(message)
         return
 
     if text == "💬相談":
-        set_user_mode(user_id, "consult")
-        reset_tarot_state(user_id)
-        await message.answer("相談内容を送ってくださいね。", reply_markup=main_menu_kb())
+        await prompt_consult_mode(message)
         return
 
-    if text == "🛒購入":
-        await send_store_menu(message)
+    if text == "🛒チャージ":
+        await prompt_charge_menu(message)
         return
 
     if text == "📊ステータス":
-        if user_id is None:
-            await message.answer(
-                "ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。",
-                reply_markup=main_menu_kb(),
-            )
-            return
-        user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
-        await message.answer(format_status(user, now=now), reply_markup=main_menu_kb())
+        await prompt_status(message, now=now)
         return
 
     spread_from_command, cleaned = parse_spread_command(text)
 
     if spread_from_command:
         if text.lower().startswith("/read1"):
-            set_user_mode(user_id, "tarot")
-            set_tarot_theme(user_id, DEFAULT_THEME)
-            set_tarot_flow(user_id, "awaiting_theme")
-            await message.answer(
-                "占いを始めます。テーマを選んでください。",
-                reply_markup=main_menu_kb(),
-            )
-            await message.answer(
-                "テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard()
-            )
+            await prompt_tarot_mode(message)
             return
         if text.lower().startswith("/love1"):
             set_user_mode(user_id, "tarot")
             set_tarot_theme(user_id, "love")
             set_tarot_flow(user_id, "awaiting_question")
             await message.answer(
-                "恋愛について占います。質問をどうぞ。",
+                build_tarot_question_prompt("love"),
                 reply_markup=main_menu_kb(),
             )
             return
@@ -1339,8 +1361,7 @@ async def handle_message(message: Message) -> None:
 
     if tarot_flow == "awaiting_theme":
         await message.answer(
-            "テーマは下のボタンから選んでください。",
-            reply_markup=build_tarot_theme_keyboard(),
+            TAROT_THEME_PROMPT, reply_markup=build_tarot_theme_keyboard()
         )
         return
 
