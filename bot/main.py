@@ -63,8 +63,7 @@ from core.monetization import (
 )
 from core.logging import setup_logging
 from core.prompts import (
-    CHAT_SYSTEM_PROMPT,
-    CONSULT_OUTPUT_FORMAT,
+    CONSULT_SYSTEM_PROMPT,
     TAROT_OUTPUT_RULES,
     TAROT_FIXED_OUTPUT_FORMAT,
     get_tarot_system_prompt,
@@ -170,20 +169,6 @@ def append_caution_note(user_text: str, response: str) -> str:
     return f"{response}{separator}{CAUTION_NOTE}"
 
 
-def _summarize_headline(text: str, *, limit: int = 35) -> str:
-    if not text:
-        return "少し整理してお伝えします。"
-    sentence = re.split(r"[。！？!\?]\s*", text)[0].strip()
-    return sentence[:limit] if sentence else text[:limit]
-
-
-def _build_bullet_block(paragraph: str) -> str:
-    cleaned_lines = [line.strip("- ") for line in paragraph.splitlines() if line.strip()]
-    if not cleaned_lines:
-        return "- …"
-    return "- " + "\n- ".join(cleaned_lines)
-
-
 def format_tarot_answer(text: str, card_line: str | None = None) -> str:
     content = (text or "").strip()
     if not content:
@@ -240,40 +225,34 @@ def format_long_answer(text: str, mode: str, card_line: str | None = None) -> st
 
     content = (text or "").strip()
     if not content:
-        return "結論：少し情報が足りないようです。もう一度教えてくださいね。"
+        return "少し情報が足りないようです。もう一度教えてくださいね。"
+
+    lines = [
+        re.sub(r"^結論：?\s*", "", line)
+        for line in content.splitlines()
+    ]
+    cleaned_lines: list[str] = []
+    for line in lines:
+        stripped = re.sub(r"^[0-9]+[\.．]\s*", "", line)
+        stripped = re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*", "", stripped)
+        stripped = re.sub(r"^✅\s*", "", stripped)
+        stripped = stripped.replace("次の一手", "").strip()
+        if stripped or (cleaned_lines and cleaned_lines[-1] != ""):
+            cleaned_lines.append(stripped)
+
+    while cleaned_lines and cleaned_lines[0] == "":
+        cleaned_lines.pop(0)
+    while cleaned_lines and cleaned_lines[-1] == "":
+        cleaned_lines.pop()
+
+    content = "\n".join(cleaned_lines) if cleaned_lines else ""
+    if not content:
+        return "少し情報が足りないようです。もう一度教えてくださいね。"
 
     content = re.sub(r"(\n\s*){3,}", "\n\n", content)
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    conclusion_line = next((line for line in lines if line.startswith("結論：")), None)
-    if not conclusion_line:
-        conclusion_line = f"結論：{_summarize_headline(content)}"
-
-    if conclusion_line in content:
-        remainder = content.split(conclusion_line, 1)[1].strip()
-    else:
-        remainder = content
-
-    paragraphs = [para.strip() for para in re.split(r"\n\s*\n", remainder) if para.strip()]
-
-    section_titles = [
-        "① いま起きていること（共感＋要約）",
-        "② どう考えると楽になるか",
-        "③ 具体策",
-        "✅ 次の一手（1つ）",
-    ]
-
-    sections: list[str] = []
-    for title in section_titles:
-        target_para = paragraphs.pop(0) if paragraphs else ""
-        sections.append(f"{title}\n{_build_bullet_block(target_para)}")
-
-    blocks = [conclusion_line]
-    blocks.extend(sections)
-    formatted = "\n\n".join(blocks)
-
-    if len(formatted) > 1400:
-        formatted = formatted[:1380].rstrip() + "…"
-    return formatted
+    if len(content) > 1400:
+        content = content[:1380].rstrip() + "…"
+    return content
 
 
 def split_text_for_sending(text: str, *, limit: int = 3800) -> list[str]:
@@ -325,14 +304,19 @@ async def send_long_text(
         await bot.send_message(chat_id, chunk, reply_to_message_id=reply_to)
 
 
-def _acquire_inflight(user_id: int | None, message: Message | None = None) -> bool:
+def _acquire_inflight(
+    user_id: int | None,
+    message: Message | None = None,
+    *,
+    busy_message: str | None = "いま鑑定中です…少し待ってね。",
+) -> bool:
     if user_id is None:
         return True
     if user_id in IN_FLIGHT_USERS:
         if message:
-            asyncio.create_task(
-                message.answer("いま鑑定中です…少し待ってね。")
-            )
+            reply_text = busy_message or ""
+            if reply_text:
+                asyncio.create_task(message.answer(reply_text))
         return False
     IN_FLIGHT_USERS.add(user_id)
     return True
@@ -370,8 +354,7 @@ def utcnow() -> datetime:
 def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
     """通常チャットモードの system prompt を組み立てる。"""
     return [
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-        {"role": "system", "content": CONSULT_OUTPUT_FORMAT},
+        {"role": "system", "content": CONSULT_SYSTEM_PROMPT},
         {"role": "user", "content": user_query},
     ]
 
@@ -1571,12 +1554,12 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         },
     )
 
-    if not _acquire_inflight(user_id, message):
+    if not _acquire_inflight(
+        user_id, message, busy_message="いま返信中です…少し待ってね。"
+    ):
         return
 
-    status_message: Message | None = None
     try:
-        status_message = await message.answer("🔮鑑定中です…（しばらくお待ちください）")
         openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query))
         openai_latency_ms = (perf_counter() - openai_start) * 1000
@@ -1586,10 +1569,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
             )
             await send_long_text(
-                message.chat.id,
-                error_text,
-                reply_to=message.message_id,
-                edit_target=status_message,
+                message.chat.id, error_text, reply_to=message.message_id
             )
             return
         safe_answer = await ensure_general_chat_safety(answer)
@@ -1599,7 +1579,6 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             message.chat.id,
             safe_answer,
             reply_to=message.message_id,
-            edit_target=status_message,
         )
     except Exception:
         logger.exception("Unexpected error during general chat")
@@ -1607,15 +1586,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             "すみません、今ちょっと調子が悪いみたいです…\n"
             "少し時間をおいてから、もう一度メッセージを送ってもらえると助かります。"
         )
-        if status_message:
-            await send_long_text(
-                message.chat.id,
-                fallback,
-                reply_to=message.message_id,
-                edit_target=status_message,
-            )
-        else:
-            await message.answer(fallback)
+        await message.answer(fallback)
     finally:
         total_ms = (perf_counter() - total_start) * 1000
         logger.info(
