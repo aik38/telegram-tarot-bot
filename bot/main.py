@@ -883,11 +883,19 @@ def build_tarot_messages(
     rules = SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
     rules_text = "\n".join(f"- {rule}" for rule in rules)
     tarot_system_prompt = f"{get_tarot_system_prompt(theme)}\n出力ルール:\n{rules_text}"
-    action_count_text = (
-        f"- 次の一手の箇条書きは{action_count}個を目安に。内容が薄いなら減らし、必要なら最大4個まで。"
-        if action_count is not None
-        else "- 次の一手の箇条書きは2〜3個を基本に、必要なときだけ4個まで。"
-    )
+    if action_count is not None:
+        if action_count == 4:
+            action_count_text = (
+                "- 次の一手は必ず4個。内容が薄い場合は各項目を短くしないで具体化する。"
+            )
+        elif action_count in {2, 3}:
+            action_count_text = (
+                f"- 次の一手は必ず{action_count}個。4個は禁止。必要な要素は各項目に統合して良い。"
+            )
+        else:
+            action_count_text = "- 次の一手はシステムの指示個数を守り、必要でも4個までに抑える。"
+    else:
+        action_count_text = "- 次の一手は2〜3個を基本に、必要なときだけ4個まで。"
     format_hint = (
         "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
         f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
@@ -1442,6 +1450,16 @@ async def handle_tarot_reading(
         if guidance_note:
             formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
         formatted_answer = append_caution_note(user_query, formatted_answer)
+        bullet_count = sum(
+            1 for line in formatted_answer.splitlines() if line.lstrip().startswith("・")
+        )
+        logger.info(
+            "Tarot bullet count",
+            extra={
+                "action_count": action_count,
+                "bullet_count": bullet_count,
+            },
+        )
         if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
