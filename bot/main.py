@@ -114,22 +114,53 @@ TAROT_THEME_LABELS: dict[str, str] = {
 }
 
 TAROT_THEME_PROMPT = "🎩占いモードです。まずテーマを選んでください👇（恋愛/結婚/仕事/人生）"
-TAROT_THEME_SELECTED_PROMPT = (
-    "✅テーマ：{theme_label}。占いたいことを1つ送ってください。例『来月の仕事運は？』"
-)
+TAROT_THEME_EXAMPLES: dict[str, tuple[str, str, str]] = {
+    "love": ("あの人の気持ちは？", "連絡は来る？", "今月の恋愛運は？"),
+    "marriage": ("結婚のタイミングは？", "この人と結婚できる？", "結婚に向けて今すべきことは？"),
+    "work": ("来月の仕事運は？", "転職すべき？", "職場の人間関係は良くなる？"),
+    "life": ("来年の流れは？", "今いちばん大事にすべきことは？", "迷っている選択、どっちが良い？"),
+}
 CONSULT_MODE_PROMPT = (
-    "💬相談モードです。状況→気持ち→どうなりたいか、の順で送るとスムーズです（長文OK）。"
+    "💬相談モードです。なんでも相談してね。お話し聞くよ！\n"
+    "今の状況をそのまま送ってください（長文OK）。"
 )
 CHARGE_MODE_PROMPT = (
     "🛒チャージです。チケット/パスを選んでください（Telegram Stars決済）。購入後は🎩占いに戻れます。"
 )
 STATUS_MODE_PROMPT = "📊現在のご利用状況です。"
+CAUTION_NOTE = (
+    "※医療・法律・投資の判断は専門家にご相談ください（一般的な情報としてお伝えします）。"
+)
+CAUTION_KEYWORDS = {
+    "medical": ["病気", "症状", "診断", "薬", "治療", "病院"],
+    "legal": ["法律", "弁護士", "訴訟", "契約", "違法", "逮捕"],
+    "investment": ["投資", "株", "fx", "仮想通貨", "利回り", "資産運用"],
+}
 
 
 def build_tarot_question_prompt(theme: str) -> str:
-    return TAROT_THEME_SELECTED_PROMPT.format(
-        theme_label=get_tarot_theme_label(theme)
+    theme_label = get_tarot_theme_label(theme)
+    examples = TAROT_THEME_EXAMPLES.get(theme, TAROT_THEME_EXAMPLES[DEFAULT_THEME])
+    example_text = "』『".join(examples)
+    return (
+        f"✅テーマ：{theme_label}。占いたいことを1つ送ってください。\n"
+        f"例：『{example_text}』"
     )
+
+
+def _contains_caution_keyword(text: str) -> bool:
+    lowered = text.lower()
+    for keyword_list in CAUTION_KEYWORDS.values():
+        if any(keyword in lowered for keyword in keyword_list):
+            return True
+    return False
+
+
+def append_caution_note(user_text: str, response: str) -> str:
+    if not user_text or not _contains_caution_keyword(user_text):
+        return response
+    separator = "\n\n" if not response.endswith("\n") else "\n"
+    return f"{response}{separator}{CAUTION_NOTE}"
 
 
 def _usage_today(now: datetime) -> datetime.date:
@@ -540,12 +571,10 @@ def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です。\n"
-        "🎩占い：テーマ→質問を送信（無料枠あり/追加は🛒チャージ）\n"
-        "💬相談：悩みを自由に送信\n"
-        "🛒チャージ：チケット/パス購入（Stars）\n"
+        "🎩占い：テーマ→質問を送信（無料枠あり／追加は🛒チャージ）\n"
+        "💬相談：なんでも話してね\n"
         "📊ステータス：残り回数・期限・次回リセット\n"
-        "コマンド: /buy /status /terms /support\n"
-        "※医療・法律・投資は専門家へ"
+        "コマンド：/buy /status /terms /support"
     )
 
 
@@ -1163,6 +1192,7 @@ async def handle_tarot_reading(
     safe_answer = ensure_tarot_response_prefixed(answer, heading)
     if guidance_note:
         safe_answer = f"{safe_answer}\n\n{guidance_note}"
+    safe_answer = append_caution_note(user_query, safe_answer)
     await message.answer(safe_answer)
 
 
@@ -1263,6 +1293,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
             return
         safe_answer = await ensure_general_chat_safety(answer)
+        safe_answer = append_caution_note(user_query, safe_answer)
         await message.answer(safe_answer)
     except Exception:
         logger.exception("Unexpected error during general chat")
