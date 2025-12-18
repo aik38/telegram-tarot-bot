@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,6 +14,8 @@ def import_bot_main(monkeypatch, tmp_path=None):
     monkeypatch.setenv("OPENAI_API_KEY", "dummy")
     if tmp_path is not None:
         monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "test.db"))
+    if "core.config" in sys.modules:
+        del sys.modules["core.config"]
     if "core.monetization" in sys.modules:
         del sys.modules["core.monetization"]
     if "core.db" in sys.modules:
@@ -273,3 +276,26 @@ def test_admin_cannot_refund(monkeypatch, tmp_path):
     asyncio.run(bot_main.cmd_refund(message))
 
     assert any("管理者専用" in ans for ans in message.answers)
+
+
+def test_admin_status_shows_virtual_pass(monkeypatch, tmp_path):
+    admin_id = 9001
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: fixed_now)
+
+    status_message = DummyMessage("/status", user_id=admin_id)
+    asyncio.run(bot_main.cmd_status(status_message))
+
+    assert status_message.answers
+    status_text = status_message.answers[0]
+    expected_expiry = (
+        fixed_now + timedelta(days=30)
+    ).astimezone(bot_main.USAGE_TIMEZONE).strftime("%Y-%m-%d %H:%M JST")
+
+    assert "管理者モード" in status_text
+    assert "パス有効期限: なし" not in status_text
+    assert expected_expiry in status_text
+    assert "管理者" in status_text

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Set
 
 from dotenv import load_dotenv
 
-from core.db import get_user, has_active_pass
+from core.db import UserRecord, get_user, has_active_pass
 
 load_dotenv()
 
@@ -59,10 +59,55 @@ def get_user_with_default(user_id: int | None):
     return get_user(user_id)
 
 
+def _user_pass_expiry(user: UserRecord | None, now: datetime) -> datetime | None:
+    if user is None:
+        return None
+    if user.pass_until and user.pass_until > now:
+        return user.pass_until
+    if user.premium_until and user.premium_until > now:
+        return user.premium_until
+    return None
+
+
+def effective_has_pass(
+    user_id: int | None, user: UserRecord | None, now: datetime | None = None
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    if user_id is None:
+        return False
+
+    if user_id in ADMIN_USER_IDS:
+        return True
+
+    if _user_pass_expiry(user, now):
+        return True
+
+    return has_active_pass(user_id, now=now)
+
+
+def effective_pass_expires_at(
+    user_id: int | None, user: UserRecord | None, now: datetime
+) -> datetime | None:
+    if user_id is None:
+        return None
+
+    if user_id in ADMIN_USER_IDS:
+        return now + timedelta(days=30)
+
+    expiry = _user_pass_expiry(user, now)
+    if expiry:
+        return expiry
+
+    db_user = user if user and user.user_id == user_id else get_user(user_id)
+    return _user_pass_expiry(db_user, now)
+
+
 __all__ = [
     "ADMIN_USER_IDS",
     "PAYWALL_ENABLED",
     "PREMIUM_USER_IDS",
+    "effective_has_pass",
+    "effective_pass_expires_at",
     "get_user_with_default",
     "is_premium_user",
 ]
