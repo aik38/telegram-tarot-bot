@@ -184,7 +184,60 @@ def _build_bullet_block(paragraph: str) -> str:
     return "- " + "\n- ".join(cleaned_lines)
 
 
+def format_tarot_answer(text: str, card_line: str | None = None) -> str:
+    content = (text or "").strip()
+    if not content:
+        return "占い結果をうまく作成できませんでした。もう一度占わせてください。"
+
+    content = content.replace("🃏", "")
+    content = re.sub(r"(\n\s*){3,}", "\n\n", content)
+    lines = [line.rstrip() for line in content.splitlines()]
+
+    normalized_lines: list[str] = []
+    card_line_found = False
+    for line in lines:
+        cleaned = re.sub(r"^結論：\s*", "", line).strip()
+        cleaned = re.sub(r"^[0-9]+[\.．]\s*", "", cleaned)
+        cleaned = re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*", "", cleaned)
+        cleaned = re.sub(r"^カード：", "引いたカード：", cleaned)
+        if "引いたカード：" in cleaned:
+            if card_line_found:
+                continue
+            card_line_found = True
+        normalized_lines.append(cleaned)
+
+    if not card_line_found and card_line:
+        intro = [ln for ln in normalized_lines[:2] if ln]
+        rest = normalized_lines[2:]
+        normalized_lines = intro
+        if intro:
+            normalized_lines.append("")
+        normalized_lines.append(card_line)
+        if rest:
+            normalized_lines.append("")
+            normalized_lines.extend(rest)
+
+    compacted: list[str] = []
+    for line in normalized_lines:
+        if line == "" and compacted and compacted[-1] == "":
+            continue
+        compacted.append(line)
+
+    while compacted and compacted[0] == "":
+        compacted.pop(0)
+    while compacted and compacted[-1] == "":
+        compacted.pop()
+
+    formatted = "\n".join(compacted)
+    if len(formatted) > 1400:
+        formatted = formatted[:1380].rstrip() + "…"
+    return formatted
+
+
 def format_long_answer(text: str, mode: str, card_line: str | None = None) -> str:
+    if mode == "tarot":
+        return format_tarot_answer(text, card_line)
+
     content = (text or "").strip()
     if not content:
         return "結論：少し情報が足りないようです。もう一度教えてくださいね。"
@@ -202,20 +255,12 @@ def format_long_answer(text: str, mode: str, card_line: str | None = None) -> st
 
     paragraphs = [para.strip() for para in re.split(r"\n\s*\n", remainder) if para.strip()]
 
-    if mode == "tarot":
-        section_titles = [
-            "① 今の状況",
-            "② 重要ポイント",
-            "③ アドバイス",
-            "✅ 次の一手",
-        ]
-    else:
-        section_titles = [
-            "① いま起きていること（共感＋要約）",
-            "② どう考えると楽になるか",
-            "③ 具体策",
-            "✅ 次の一手（1つ）",
-        ]
+    section_titles = [
+        "① いま起きていること（共感＋要約）",
+        "② どう考えると楽になるか",
+        "③ 具体策",
+        "✅ 次の一手（1つ）",
+    ]
 
     sections: list[str] = []
     for title in section_titles:
@@ -223,8 +268,6 @@ def format_long_answer(text: str, mode: str, card_line: str | None = None) -> st
         sections.append(f"{title}\n{_build_bullet_block(target_para)}")
 
     blocks = [conclusion_line]
-    if mode == "tarot" and card_line:
-        blocks.append(card_line if card_line.startswith("🃏カード：") else f"🃏カード：{card_line}")
     blocks.extend(sections)
     formatted = "\n\n".join(blocks)
 
@@ -302,9 +345,10 @@ def _release_inflight(user_id: int | None) -> None:
 
 
 def _mark_recent_handled(message: Message) -> bool:
-    if message.message_id is None:
+    message_id = getattr(message, "message_id", None)
+    if message_id is None:
         return True
-    key = (message.chat.id, message.message_id)
+    key = (message.chat.id, message_id)
     if key in RECENT_HANDLED:
         return False
     if len(RECENT_HANDLED_ORDER) >= RECENT_HANDLED_ORDER.maxlen:
@@ -397,6 +441,15 @@ def _preview_text(text: str, limit: int = 80) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def get_chat_id(message: Message) -> int | None:
+    chat = getattr(message, "chat", None)
+    if chat and getattr(chat, "id", None) is not None:
+        return chat.id
+    if message.from_user:
+        return message.from_user.id
+    return None
 
 
 def get_user_mode(user_id: int | None) -> str:
@@ -645,6 +698,8 @@ async def execute_tarot_request(
     spread_to_use = spread or choose_spread(user_query)
     paywall_triggered = False
     short_response = False
+    allowed = True
+    effective_theme = theme or get_tarot_theme(user_id)
 
     if spread_to_use == ONE_CARD:
         if user_id is not None and user is not None:
@@ -667,7 +722,7 @@ async def execute_tarot_request(
                 "text_preview": _preview_text(user_query),
                 "route": "tarot",
                 "tarot_flow": TAROT_FLOW.get(user_id),
-                "tarot_theme": theme or get_tarot_theme(user_id),
+                "tarot_theme": effective_theme,
                 "paywall_triggered": paywall_triggered,
             },
         )
@@ -684,17 +739,17 @@ async def execute_tarot_request(
                 logger.info(
                     "Tarot request blocked",
                     extra={
-                        "mode": "tarot",
-                        "user_id": user_id,
-                        "admin_mode": is_admin_user(user_id),
-                        "text_preview": _preview_text(user_query),
-                        "route": "tarot",
-                        "tarot_flow": TAROT_FLOW.get(user_id),
-                        "tarot_theme": theme or get_tarot_theme(user_id),
-                        "paywall_triggered": paywall_triggered,
-                    },
-                )
-                return
+                    "mode": "tarot",
+                    "user_id": user_id,
+                    "admin_mode": is_admin_user(user_id),
+                    "text_preview": _preview_text(user_query),
+                    "route": "tarot",
+                    "tarot_flow": TAROT_FLOW.get(user_id),
+                    "tarot_theme": effective_theme,
+                    "paywall_triggered": paywall_triggered,
+                },
+            )
+            return
 
     logger.info(
         "Handling message",
@@ -705,7 +760,7 @@ async def execute_tarot_request(
             "text_preview": _preview_text(user_query),
             "route": "tarot",
             "tarot_flow": TAROT_FLOW.get(user_id),
-            "tarot_theme": theme or get_tarot_theme(user_id),
+            "tarot_theme": effective_theme,
             "paywall_triggered": paywall_triggered,
         },
     )
@@ -716,7 +771,6 @@ async def execute_tarot_request(
         spread=spread_to_use,
         guidance_note=guidance_note or build_paid_hint(user_query),
         short_response=short_response,
-        theme=theme or get_tarot_theme(user_id),
     )
 
 
@@ -725,7 +779,9 @@ def get_start_text() -> str:
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です。\n"
         "🎩占い：テーマ→質問を送信（無料枠あり／追加は🛒チャージ）\n"
-        "💬相談：なんでも話してね\n"
+        "・/read1 /love1：1枚引き\n"
+        "・/read3 /love3：3枚スプレッド\n"
+        "💬相談：なんでも話してね（trial中は1日2回ショート回答）\n"
         "📊ステータス：残り回数・期限・次回リセット\n"
         "コマンド：/buy /status /terms /support"
     )
@@ -835,9 +891,10 @@ def build_tarot_messages(
     rules_text = "\n".join(f"- {rule}" for rule in rules)
     tarot_system_prompt = f"{get_tarot_system_prompt(theme)}\n出力ルール:\n{rules_text}"
     format_hint = (
-        "必ず次の形式で書いてください:\n"
+        "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
         f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
-        "- 500〜900文字目安、1400文字以内。"
+        "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
+        "- カード名は「引いたカード：」行で1回だけ伝える。🃏などの絵文字は禁止。"
     )
 
     tarot_payload = {
@@ -874,12 +931,17 @@ def format_drawn_card_heading(drawn_cards: list[dict[str, str]]) -> str:
 
 def format_drawn_card_line(drawn_cards: list[dict[str, str]]) -> str:
     if not drawn_cards:
-        return "カード情報を取得できませんでした。"
+        return "引いたカード：カード情報を取得できませんでした。"
     card_labels = []
     for item in drawn_cards:
         card = item["card"]
-        card_labels.append(f"{card['name_ja']}（{card['orientation_label_ja']}）")
-    return "🃏カード：" + "、".join(card_labels)
+        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
+        position_label = item.get("label_ja")
+        if position_label:
+            card_labels.append(f"{card_label} - {position_label}")
+        else:
+            card_labels.append(card_label)
+    return "引いたカード：" + "、".join(card_labels)
 
 
 def ensure_tarot_response_prefixed(answer: str, heading: str) -> str:
@@ -1306,10 +1368,13 @@ async def handle_tarot_reading(
     total_start = perf_counter()
     openai_latency_ms: float | None = None
     user_id = message.from_user.id if message.from_user else None
+    chat_id = get_chat_id(message)
+    can_use_bot = hasattr(message, "chat") and getattr(message.chat, "id", None) is not None
     if not _acquire_inflight(user_id, message):
         return
 
     spread_to_use = spread or choose_spread(user_query)
+    effective_theme = theme or get_tarot_theme(user_id)
     rng = random.Random()
     drawn = draw_cards(spread_to_use, rng=rng)
 
@@ -1338,18 +1403,17 @@ async def handle_tarot_reading(
             }
         )
 
-    heading = format_drawn_card_heading(drawn_payload)
     messages = build_tarot_messages(
         spread=spread_to_use,
         user_query=user_query,
         drawn_cards=drawn_payload,
         short=short_response,
-        theme=theme,
+        theme=effective_theme,
     )
 
     status_message: Message | None = None
     try:
-        status_message = await message.answer("🔮鑑定中です…（10秒ほど）")
+        status_message = await message.answer("🔮鑑定中です…（しばらくお待ちください）")
         openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(messages)
         openai_latency_ms = (perf_counter() - openai_start) * 1000
@@ -1358,12 +1422,15 @@ async def handle_tarot_reading(
                 answer
                 + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
             )
-            await send_long_text(
-                message.chat.id,
-                error_text,
-                reply_to=message.message_id,
-                edit_target=status_message,
-            )
+            if can_use_bot and chat_id is not None:
+                await send_long_text(
+                    chat_id,
+                    error_text,
+                    reply_to=getattr(message, "message_id", None),
+                    edit_target=status_message,
+                )
+            else:
+                await message.answer(error_text)
             return
 
         formatted_answer = format_long_answer(
@@ -1374,23 +1441,26 @@ async def handle_tarot_reading(
         if guidance_note:
             formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
         formatted_answer = append_caution_note(user_query, formatted_answer)
-        await send_long_text(
-            message.chat.id,
-            formatted_answer,
-            reply_to=message.message_id,
-            edit_target=status_message,
-        )
+        if can_use_bot and chat_id is not None:
+            await send_long_text(
+                chat_id,
+                formatted_answer,
+                reply_to=getattr(message, "message_id", None),
+                edit_target=status_message,
+            )
+        else:
+            await message.answer(formatted_answer)
     except Exception:
         logger.exception("Unexpected error during tarot reading")
         fallback = (
             "占いの準備で少しつまずいてしまいました。\n"
             "時間をおいて、もう一度話しかけてもらえるとうれしいです。"
         )
-        if status_message:
+        if status_message and can_use_bot and chat_id is not None:
             await send_long_text(
-                message.chat.id,
+                chat_id,
                 fallback,
-                reply_to=message.message_id,
+                reply_to=getattr(message, "message_id", None),
                 edit_target=status_message,
             )
         else:
@@ -1402,8 +1472,8 @@ async def handle_tarot_reading(
             extra={
                 "mode": "tarot",
                 "user_id": user_id,
-                "message_id": message.message_id,
-                "tarot_theme": theme or get_tarot_theme(user_id),
+                "message_id": getattr(message, "message_id", None),
+                "tarot_theme": effective_theme,
                 "openai_latency_ms": round(openai_latency_ms or 0, 2),
                 "total_handler_ms": round(total_ms, 2),
             },
@@ -1506,7 +1576,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
 
     status_message: Message | None = None
     try:
-        status_message = await message.answer("🔮鑑定中です…（10秒ほど）")
+        status_message = await message.answer("🔮鑑定中です…（しばらくお待ちください）")
         openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query))
         openai_latency_ms = (perf_counter() - openai_start) * 1000
@@ -1553,7 +1623,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             extra={
                 "mode": "chat",
                 "user_id": user_id,
-                "message_id": message.message_id,
+                "message_id": getattr(message, "message_id", None),
                 "openai_latency_ms": round(openai_latency_ms or 0, 2),
                 "total_handler_ms": round(total_ms, 2),
             },
@@ -1628,25 +1698,15 @@ async def handle_message(message: Message) -> None:
     spread_from_command, cleaned = parse_spread_command(text)
 
     if spread_from_command:
-        if text.lower().startswith("/read1"):
-            await prompt_tarot_mode(message)
-            return
+        set_user_mode(user_id, "tarot")
         if text.lower().startswith("/love1"):
-            set_user_mode(user_id, "tarot")
             set_tarot_theme(user_id, "love")
-            set_tarot_flow(user_id, "awaiting_question")
-            await message.answer(
-                build_tarot_question_prompt("love"),
-                reply_markup=main_menu_kb(),
-            )
-            return
-
         user_query = cleaned or "今気になっていることについて占ってください。"
         await execute_tarot_request(
             message,
             user_query=user_query,
             spread=spread_from_command,
-            theme=tarot_theme,
+            theme=get_tarot_theme(user_id),
         )
         return
 
