@@ -121,8 +121,7 @@ TAROT_THEME_EXAMPLES: dict[str, tuple[str, str, str]] = {
     "life": ("来年の流れは？", "今いちばん大事にすべきことは？", "迷っている選択、どっちが良い？"),
 }
 CONSULT_MODE_PROMPT = (
-    "💬相談モードです。なんでも相談してね。お話し聞くよ！\n"
-    "今の状況をそのまま送ってください（長文OK）。"
+    "💬相談モードです。なんでも相談してね。お話し聞くよ！"
 )
 CHARGE_MODE_PROMPT = (
     "🛒チャージです。チケット/パスを選んでください（Telegram Stars決済）。購入後は🎩占いに戻れます。"
@@ -315,7 +314,7 @@ def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❤️恋愛", callback_data="tarot_theme:love")],
             [InlineKeyboardButton(text="💍結婚", callback_data="tarot_theme:marriage")],
             [InlineKeyboardButton(text="💼仕事", callback_data="tarot_theme:work")],
-            [InlineKeyboardButton(text="🌿人生", callback_data="tarot_theme:life")],
+            [InlineKeyboardButton(text="🌉人生", callback_data="tarot_theme:life")],
         ]
     )
 
