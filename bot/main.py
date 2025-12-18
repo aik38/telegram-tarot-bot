@@ -3,7 +3,10 @@ import json
 import logging
 import os
 import random
+import re
+from collections import deque
 from datetime import datetime, time, timedelta, timezone
+from time import perf_counter
 from pathlib import Path
 from typing import Iterable
 
@@ -61,7 +64,9 @@ from core.monetization import (
 from core.logging import setup_logging
 from core.prompts import (
     CHAT_SYSTEM_PROMPT,
+    CONSULT_OUTPUT_FORMAT,
     TAROT_OUTPUT_RULES,
+    TAROT_FIXED_OUTPUT_FORMAT,
     get_tarot_system_prompt,
 )
 from core.tarot import (
@@ -83,6 +88,9 @@ dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
+IN_FLIGHT_USERS: set[int] = set()
+RECENT_HANDLED: set[tuple[int, int]] = set()
+RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
 
 FREE_ONE_ORACLE_TRIAL_PER_DAY = 2
 FREE_ONE_ORACLE_POST_TRIAL_PER_DAY = 1
@@ -162,6 +170,151 @@ def append_caution_note(user_text: str, response: str) -> str:
     return f"{response}{separator}{CAUTION_NOTE}"
 
 
+def _summarize_headline(text: str, *, limit: int = 35) -> str:
+    if not text:
+        return "少し整理してお伝えします。"
+    sentence = re.split(r"[。！？!\?]\s*", text)[0].strip()
+    return sentence[:limit] if sentence else text[:limit]
+
+
+def _build_bullet_block(paragraph: str) -> str:
+    cleaned_lines = [line.strip("- ") for line in paragraph.splitlines() if line.strip()]
+    if not cleaned_lines:
+        return "- …"
+    return "- " + "\n- ".join(cleaned_lines)
+
+
+def format_long_answer(text: str, mode: str, card_line: str | None = None) -> str:
+    content = (text or "").strip()
+    if not content:
+        return "結論：少し情報が足りないようです。もう一度教えてくださいね。"
+
+    content = re.sub(r"(\n\s*){3,}", "\n\n", content)
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    conclusion_line = next((line for line in lines if line.startswith("結論：")), None)
+    if not conclusion_line:
+        conclusion_line = f"結論：{_summarize_headline(content)}"
+
+    if conclusion_line in content:
+        remainder = content.split(conclusion_line, 1)[1].strip()
+    else:
+        remainder = content
+
+    paragraphs = [para.strip() for para in re.split(r"\n\s*\n", remainder) if para.strip()]
+
+    if mode == "tarot":
+        section_titles = [
+            "① 今の状況",
+            "② 重要ポイント",
+            "③ アドバイス",
+            "✅ 次の一手",
+        ]
+    else:
+        section_titles = [
+            "① いま起きていること（共感＋要約）",
+            "② どう考えると楽になるか",
+            "③ 具体策",
+            "✅ 次の一手（1つ）",
+        ]
+
+    sections: list[str] = []
+    for title in section_titles:
+        target_para = paragraphs.pop(0) if paragraphs else ""
+        sections.append(f"{title}\n{_build_bullet_block(target_para)}")
+
+    blocks = [conclusion_line]
+    if mode == "tarot" and card_line:
+        blocks.append(card_line if card_line.startswith("🃏カード：") else f"🃏カード：{card_line}")
+    blocks.extend(sections)
+    formatted = "\n\n".join(blocks)
+
+    if len(formatted) > 1400:
+        formatted = formatted[:1380].rstrip() + "…"
+    return formatted
+
+
+def split_text_for_sending(text: str, *, limit: int = 3800) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    paragraphs = text.split("\n\n")
+    chunks: list[str] = []
+    current = ""
+    for para in paragraphs:
+        candidate = f"{current}\n\n{para}" if current else para
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            if len(para) > limit:
+                while len(para) > limit:
+                    chunks.append(para[:limit])
+                    para = para[limit:]
+                if para:
+                    current = para
+                else:
+                    current = ""
+            else:
+                current = para
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def send_long_text(
+    chat_id: int,
+    text: str,
+    *,
+    reply_to: int | None = None,
+    edit_target: Message | None = None,
+) -> None:
+    chunks = split_text_for_sending(text)
+    first_chunk, *rest = chunks
+    if edit_target:
+        try:
+            await edit_target.edit_text(first_chunk)
+        except Exception:
+            await bot.send_message(chat_id, first_chunk, reply_to_message_id=reply_to)
+    else:
+        await bot.send_message(chat_id, first_chunk, reply_to_message_id=reply_to)
+
+    for chunk in rest:
+        await bot.send_message(chat_id, chunk, reply_to_message_id=reply_to)
+
+
+def _acquire_inflight(user_id: int | None, message: Message | None = None) -> bool:
+    if user_id is None:
+        return True
+    if user_id in IN_FLIGHT_USERS:
+        if message:
+            asyncio.create_task(
+                message.answer("いま鑑定中です…少し待ってね。")
+            )
+        return False
+    IN_FLIGHT_USERS.add(user_id)
+    return True
+
+
+def _release_inflight(user_id: int | None) -> None:
+    if user_id is None:
+        return
+    IN_FLIGHT_USERS.discard(user_id)
+
+
+def _mark_recent_handled(message: Message) -> bool:
+    if message.message_id is None:
+        return True
+    key = (message.chat.id, message.message_id)
+    if key in RECENT_HANDLED:
+        return False
+    if len(RECENT_HANDLED_ORDER) >= RECENT_HANDLED_ORDER.maxlen:
+        oldest = RECENT_HANDLED_ORDER.popleft()
+        RECENT_HANDLED.discard(oldest)
+    RECENT_HANDLED.add(key)
+    RECENT_HANDLED_ORDER.append(key)
+    return True
+
+
 def _usage_today(now: datetime) -> datetime.date:
     return now.astimezone(USAGE_TIMEZONE).date()
 
@@ -174,6 +327,7 @@ def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
     """通常チャットモードの system prompt を組み立てる。"""
     return [
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        {"role": "system", "content": CONSULT_OUTPUT_FORMAT},
         {"role": "user", "content": user_query},
     ]
 
@@ -680,6 +834,11 @@ def build_tarot_messages(
     rules = SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
     rules_text = "\n".join(f"- {rule}" for rule in rules)
     tarot_system_prompt = f"{get_tarot_system_prompt(theme)}\n出力ルール:\n{rules_text}"
+    format_hint = (
+        "必ず次の形式で書いてください:\n"
+        f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
+        "- 500〜900文字目安、1400文字以内。"
+    )
 
     tarot_payload = {
         "spread_id": spread.id,
@@ -690,6 +849,7 @@ def build_tarot_messages(
 
     return [
         {"role": "system", "content": tarot_system_prompt},
+        {"role": "system", "content": format_hint},
         {"role": "assistant", "content": json.dumps(tarot_payload, ensure_ascii=False, indent=2)},
         {"role": "user", "content": user_query},
     ]
@@ -710,6 +870,16 @@ def format_drawn_card_heading(drawn_cards: list[dict[str, str]]) -> str:
         card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
         lines.append(f"{index}. {card_label} - {item['label_ja']}")
     return "\n".join(lines)
+
+
+def format_drawn_card_line(drawn_cards: list[dict[str, str]]) -> str:
+    if not drawn_cards:
+        return "カード情報を取得できませんでした。"
+    card_labels = []
+    for item in drawn_cards:
+        card = item["card"]
+        card_labels.append(f"{card['name_ja']}（{card['orientation_label_ja']}）")
+    return "🃏カード：" + "、".join(card_labels)
 
 
 def ensure_tarot_response_prefixed(answer: str, heading: str) -> str:
@@ -1133,6 +1303,12 @@ async def handle_tarot_reading(
     short_response: bool = False,
     theme: str | None = None,
 ) -> None:
+    total_start = perf_counter()
+    openai_latency_ms: float | None = None
+    user_id = message.from_user.id if message.from_user else None
+    if not _acquire_inflight(user_id, message):
+        return
+
     spread_to_use = spread or choose_spread(user_query)
     rng = random.Random()
     drawn = draw_cards(spread_to_use, rng=rng)
@@ -1171,28 +1347,68 @@ async def handle_tarot_reading(
         theme=theme,
     )
 
+    status_message: Message | None = None
     try:
+        status_message = await message.answer("🔮鑑定中です…（10秒ほど）")
+        openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(messages)
+        openai_latency_ms = (perf_counter() - openai_start) * 1000
+        if fatal:
+            error_text = (
+                answer
+                + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
+            )
+            await send_long_text(
+                message.chat.id,
+                error_text,
+                reply_to=message.message_id,
+                edit_target=status_message,
+            )
+            return
+
+        formatted_answer = format_long_answer(
+            answer,
+            "tarot",
+            card_line=format_drawn_card_line(drawn_payload),
+        )
+        if guidance_note:
+            formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
+        formatted_answer = append_caution_note(user_query, formatted_answer)
+        await send_long_text(
+            message.chat.id,
+            formatted_answer,
+            reply_to=message.message_id,
+            edit_target=status_message,
+        )
     except Exception:
         logger.exception("Unexpected error during tarot reading")
-        await message.answer(
+        fallback = (
             "占いの準備で少しつまずいてしまいました。\n"
             "時間をおいて、もう一度話しかけてもらえるとうれしいです。"
         )
-        return
-
-    if fatal:
-        await message.answer(
-            answer
-            + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
+        if status_message:
+            await send_long_text(
+                message.chat.id,
+                fallback,
+                reply_to=message.message_id,
+                edit_target=status_message,
+            )
+        else:
+            await message.answer(fallback)
+    finally:
+        total_ms = (perf_counter() - total_start) * 1000
+        logger.info(
+            "Tarot handler finished",
+            extra={
+                "mode": "tarot",
+                "user_id": user_id,
+                "message_id": message.message_id,
+                "tarot_theme": theme or get_tarot_theme(user_id),
+                "openai_latency_ms": round(openai_latency_ms or 0, 2),
+                "total_handler_ms": round(total_ms, 2),
+            },
         )
-        return
-
-    safe_answer = ensure_tarot_response_prefixed(answer, heading)
-    if guidance_note:
-        safe_answer = f"{safe_answer}\n\n{guidance_note}"
-    safe_answer = append_caution_note(user_query, safe_answer)
-    await message.answer(safe_answer)
+        _release_inflight(user_id)
 
 
 def _is_consult_intent(text: str) -> bool:
@@ -1239,6 +1455,8 @@ def _build_consult_block_message(*, trial_active: bool, short: bool = False) -> 
 async def handle_general_chat(message: Message, user_query: str) -> None:
     now = utcnow()
     user_id = message.from_user.id if message.from_user else None
+    total_start = perf_counter()
+    openai_latency_ms: float | None = None
     consult_intent = _is_consult_intent(user_query)
     admin_mode = is_admin_user(user_id)
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
@@ -1283,23 +1501,64 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         },
     )
 
+    if not _acquire_inflight(user_id, message):
+        return
+
+    status_message: Message | None = None
     try:
+        status_message = await message.answer("🔮鑑定中です…（10秒ほど）")
+        openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query))
+        openai_latency_ms = (perf_counter() - openai_start) * 1000
         if fatal:
-            await message.answer(
+            error_text = (
                 answer
                 + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
             )
+            await send_long_text(
+                message.chat.id,
+                error_text,
+                reply_to=message.message_id,
+                edit_target=status_message,
+            )
             return
         safe_answer = await ensure_general_chat_safety(answer)
+        safe_answer = format_long_answer(safe_answer, "consult")
         safe_answer = append_caution_note(user_query, safe_answer)
-        await message.answer(safe_answer)
+        await send_long_text(
+            message.chat.id,
+            safe_answer,
+            reply_to=message.message_id,
+            edit_target=status_message,
+        )
     except Exception:
         logger.exception("Unexpected error during general chat")
-        await message.answer(
+        fallback = (
             "すみません、今ちょっと調子が悪いみたいです…\n"
             "少し時間をおいてから、もう一度メッセージを送ってもらえると助かります。"
         )
+        if status_message:
+            await send_long_text(
+                message.chat.id,
+                fallback,
+                reply_to=message.message_id,
+                edit_target=status_message,
+            )
+        else:
+            await message.answer(fallback)
+    finally:
+        total_ms = (perf_counter() - total_start) * 1000
+        logger.info(
+            "Consult handler finished",
+            extra={
+                "mode": "chat",
+                "user_id": user_id,
+                "message_id": message.message_id,
+                "openai_latency_ms": round(openai_latency_ms or 0, 2),
+                "total_handler_ms": round(total_ms, 2),
+            },
+        )
+        _release_inflight(user_id)
 
 
 # Catch-all handler for non-command text messages
@@ -1322,6 +1581,8 @@ async def handle_message(message: Message) -> None:
     text = (message.text or "").strip()
     now = utcnow()
     user_id = message.from_user.id if message.from_user else None
+    if not _mark_recent_handled(message):
+        return
     admin_mode = is_admin_user(user_id)
     user_mode = get_user_mode(user_id)
     tarot_flow = TAROT_FLOW.get(user_id)
