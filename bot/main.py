@@ -24,8 +24,14 @@ from aiogram.types import (
     LabeledPrice,
     Message,
     PreCheckoutQuery,
+    ContentType,
     ReplyKeyboardMarkup,
 )
+from bot.handlers import static_pages, reading_flow
+from bot.keyboards.main_menu import main_menu_kb as inline_main_menu_kb
+from bot.keyboards.common import nav_kb, menu_only_kb
+from bot.middlewares.throttle import ThrottleMiddleware
+from bot.utils.validators import validate_question_text
 from openai import (
     APIConnectionError,
     APIError,
@@ -87,6 +93,8 @@ dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
+dp.message.middleware(ThrottleMiddleware())
+dp.callback_query.middleware(ThrottleMiddleware())
 IN_FLIGHT_USERS: set[int] = set()
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
@@ -487,7 +495,7 @@ def format_next_reset(now: datetime) -> str:
     return next_reset.strftime("%m/%d %H:%M JST")
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def persistent_main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🎩占い"), KeyboardButton(text="💬相談")],
@@ -496,6 +504,8 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         is_persistent=True,
         resize_keyboard=True,
     )
+
+main_menu_kb = persistent_main_menu_kb
 
 
 def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
@@ -613,8 +623,8 @@ def _evaluate_one_oracle_access(
     if is_admin:
         return True, False, latest_user
 
-        if not has_pass and base_count >= limit:
-            return False, False, latest_user
+    if not has_pass and base_count >= limit:
+        return False, False, latest_user
 
     new_count = base_count + 1
     ONE_ORACLE_MEMORY[memory_key] = new_count
@@ -701,7 +711,7 @@ async def execute_tarot_request(
     if not allowed:
         paywall_triggered = True
         await message.answer(
-            "本日の無料占いは使い切りました。続けるには🛒チャージから"
+            "本日の無料枠は使い切りました。続けるには🛒チャージから"
             "チケット/パスを選んでください。次回リセット: "
             f"{format_next_reset(now)}",
         )
@@ -1112,6 +1122,7 @@ async def cmd_terms(message: Message) -> None:
     await message.answer(
         get_terms_text(), reply_markup=build_terms_keyboard(include_buy_option=True)
     )
+    await message.answer("メニューに戻るときはボタンをご利用ください。", reply_markup=menu_only_kb())
 
 
 @dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
@@ -1154,7 +1165,7 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
 
 @dp.message(Command("support"))
 async def cmd_support(message: Message) -> None:
-    await message.answer(get_support_text())
+    await message.answer(get_support_text(), reply_markup=menu_only_kb())
 
 
 @dp.message(Command("paysupport"))
@@ -1204,7 +1215,8 @@ async def cmd_start(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
-    await message.answer(get_start_text(), reply_markup=main_menu_kb())
+    await message.answer(get_start_text(), reply_markup=persistent_main_menu_kb())
+    await message.answer("メニューはこちらからどうぞ。", reply_markup=inline_main_menu_kb())
 
 
 @dp.callback_query(F.data.startswith("buy:"))
@@ -1548,6 +1560,8 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     openai_latency_ms: float | None = None
     consult_intent = _is_consult_intent(user_query)
     admin_mode = is_admin_user(user_id)
+    chat_id_value = getattr(getattr(message, "chat", None), "id", None)
+    can_use_bot = chat_id_value is not None
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
     paywall_triggered = False
 
@@ -1574,7 +1588,8 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 set_last_general_chat_block_notice(user_id, now=now)
             return
 
-        increment_general_chat_count(user_id, now=now)
+        if not admin_mode:
+            increment_general_chat_count(user_id, now=now)
 
     logger.info(
         "Handling message",
@@ -1604,18 +1619,24 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 answer
                 + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
             )
-            await send_long_text(
-                message.chat.id, error_text, reply_to=message.message_id
-            )
+            if can_use_bot and chat_id_value is not None:
+                await send_long_text(
+                    chat_id_value, error_text, reply_to=message.message_id
+                )
+            else:
+                await message.answer(error_text)
             return
         safe_answer = await ensure_general_chat_safety(answer)
         safe_answer = format_long_answer(safe_answer, "consult")
         safe_answer = append_caution_note(user_query, safe_answer)
-        await send_long_text(
-            message.chat.id,
-            safe_answer,
-            reply_to=message.message_id,
-        )
+        if can_use_bot and chat_id_value is not None:
+            await send_long_text(
+                chat_id_value,
+                safe_answer,
+                reply_to=message.message_id,
+            )
+        else:
+            await message.answer(safe_answer)
     except Exception:
         logger.exception("Unexpected error during general chat")
         fallback = (
@@ -1651,10 +1672,19 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             "love1",
             "refund",
             "start",
+            "help",
         ]
     )
 )
 async def handle_message(message: Message) -> None:
+    content_type = getattr(message, "content_type", ContentType.TEXT)
+    is_text = content_type == ContentType.TEXT
+    if not is_text:
+        ok, error_message = validate_question_text(None, is_text=False)
+        if not ok and error_message:
+            await message.answer(error_message, reply_markup=persistent_main_menu_kb())
+        return
+
     text = (message.text or "").strip()
     now = utcnow()
     user_id = message.from_user.id if message.from_user else None
@@ -1682,7 +1712,7 @@ async def handle_message(message: Message) -> None:
     if not text:
         await message.answer(
             "気になることをもう少し詳しく教えてくれるとうれしいです。",
-            reply_markup=main_menu_kb(),
+            reply_markup=persistent_main_menu_kb(),
         )
         return
 
@@ -1724,6 +1754,10 @@ async def handle_message(message: Message) -> None:
         return
 
     if tarot_flow == "awaiting_question":
+        ok, error_message = validate_question_text(text, is_text=is_text)
+        if not ok and error_message:
+            await message.answer(error_message, reply_markup=nav_kb())
+            return
         set_tarot_flow(user_id, None)
         await execute_tarot_request(
             message,
@@ -1734,6 +1768,10 @@ async def handle_message(message: Message) -> None:
         return
 
     if user_mode == "tarot" or is_tarot_request(text):
+        ok, error_message = validate_question_text(text, is_text=is_text)
+        if not ok and error_message:
+            await message.answer(error_message, reply_markup=nav_kb())
+            return
         set_user_mode(user_id, "tarot")
         await execute_tarot_request(
             message,
@@ -1743,7 +1781,20 @@ async def handle_message(message: Message) -> None:
         )
         return
 
+    ok, error_message = validate_question_text(text, is_text=is_text)
+    if not ok and error_message:
+        await message.answer(error_message, reply_markup=nav_kb())
+        return
+
     await handle_general_chat(message, user_query=text)
+
+reading_flow.setup_dependencies(
+    execute_tarot_request=execute_tarot_request,
+    get_start_text=get_start_text,
+    persistent_menu_kb=persistent_main_menu_kb,
+)
+dp.include_router(static_pages.create_router())
+dp.include_router(reading_flow.create_router())
 
 
 async def main() -> None:
@@ -1762,5 +1813,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
