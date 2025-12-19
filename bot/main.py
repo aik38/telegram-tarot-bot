@@ -6,8 +6,8 @@ import random
 import re
 from collections import deque
 from datetime import datetime, time, timedelta, timezone
-from time import perf_counter
 from pathlib import Path
+from time import monotonic, perf_counter
 from typing import Iterable
 
 from dotenv import load_dotenv
@@ -98,6 +98,7 @@ dp.callback_query.middleware(ThrottleMiddleware(apply_to_callbacks=False))
 IN_FLIGHT_USERS: set[int] = set()
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
+PENDING_PURCHASES: dict[tuple[int, str], float] = {}
 
 FREE_ONE_ORACLE_TRIAL_PER_DAY = 2
 FREE_ONE_ORACLE_POST_TRIAL_PER_DAY = 1
@@ -115,6 +116,7 @@ NON_CONSULT_OUT_OF_QUOTA_MESSAGE = (
     "ください。チャージは /buy です。"
 )
 GENERAL_CHAT_BLOCK_NOTICE_COOLDOWN = timedelta(hours=1)
+PURCHASE_DEDUP_TTL_SECONDS = 15.0
 
 USER_MODE: dict[int, str] = {}
 TAROT_FLOW: dict[int, str | None] = {}
@@ -177,11 +179,30 @@ def append_caution_note(user_text: str, response: str) -> str:
     return f"{response}{separator}{CAUTION_NOTE}"
 
 
+def _is_stale_query_error(error: Exception | str) -> bool:
+    message = str(error).lower()
+    stale_fragments = [
+        "query is too old",
+        "query id is invalid",
+        "query is too old and response time expired",
+    ]
+    return any(fragment in message for fragment in stale_fragments)
+
+
 async def _safe_answer_callback(query: CallbackQuery, *args, **kwargs) -> None:
     try:
         await query.answer(*args, **kwargs)
-    except TelegramBadRequest:
-        return
+    except TelegramBadRequest as exc:
+        if _is_stale_query_error(exc):
+            logger.warning(
+                "Callback answer skipped due to stale/invalid query",
+                extra={"callback_data": query.data, "error": str(exc)},
+            )
+            return
+        logger.exception(
+            "TelegramBadRequest while answering callback query",
+            extra={"callback_data": query.data, "error": str(exc)},
+        )
     except Exception:
         logger.exception("Failed to answer callback query", extra={"callback_data": query.data})
 
@@ -405,6 +426,52 @@ def _usage_today(now: datetime) -> datetime.date:
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _cleanup_pending_purchases(now_monotonic: float) -> None:
+    expired_keys = [
+        key for key, ts in PENDING_PURCHASES.items() if now_monotonic - ts > PURCHASE_DEDUP_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        PENDING_PURCHASES.pop(key, None)
+
+
+def _check_purchase_dedup(user_id: int, product_sku: str) -> bool:
+    now_ts = monotonic()
+    _cleanup_pending_purchases(now_ts)
+    key = (user_id, product_sku)
+    last_request = PENDING_PURCHASES.get(key)
+    if last_request and now_ts - last_request < PURCHASE_DEDUP_TTL_SECONDS:
+        return True
+    PENDING_PURCHASES[key] = now_ts
+    return False
+
+
+async def _safe_answer_pre_checkout(
+    pre_checkout_query: PreCheckoutQuery, *, ok: bool, error_message: str | None = None
+) -> None:
+    try:
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query.id,
+            ok=ok,
+            error_message=error_message,
+        )
+    except TelegramBadRequest as exc:
+        if _is_stale_query_error(exc):
+            logger.warning(
+                "Pre-checkout answer skipped due to stale/invalid query",
+                extra={"payload": pre_checkout_query.invoice_payload, "error": str(exc)},
+            )
+            return
+        logger.exception(
+            "TelegramBadRequest while answering pre_checkout_query",
+            extra={"payload": pre_checkout_query.invoice_payload, "error": str(exc)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to answer pre_checkout_query",
+            extra={"payload": pre_checkout_query.invoice_payload},
+        )
 
 
 def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
@@ -823,6 +890,8 @@ def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です。\n"
+        "無料のショート鑑定は1日2回までお試しいただけます（/read1 がショート）。\n"
+        "複数枚なら /read3 などのコマンドから始められます。\n"
         "下のボタンから「🎩占い」か「💬相談」を選んでください。\n"
         "使い方は /help で確認できます。"
     )
@@ -851,7 +920,8 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
     pass_until = effective_pass_expires_at(user.user_id, user, now)
     has_pass = effective_has_pass(user.user_id, user, now=now)
     status_title = STATUS_MODE_PROMPT
-    if is_admin_user(user.user_id):
+    admin_mode = is_admin_user(user.user_id)
+    if admin_mode:
         status_title = "📊現在のご利用状況（管理者モード）です。"
     trial_days_left = _general_chat_trial_days_left(user, now)
     trial_day = _trial_day_number(user, now)
@@ -881,37 +951,49 @@ def format_status(user: UserRecord, *, now: datetime | None = None) -> str:
         remaining_days = (_usage_today(pass_until) - _usage_today(now)).days
         remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
         pass_label = f"{pass_until.astimezone(USAGE_TIMEZONE).strftime('%Y-%m-%d %H:%M JST')} {remaining_hint}"
-        if is_admin_user(user.user_id):
+        if admin_mode:
             pass_label = f"{pass_label}（管理者）"
     else:
         pass_label = "なし"
 
-    return (
-        f"{status_title}\n"
-        f"・trial: 初回利用から{trial_day}日目\n"
-        f"・パス有効期限: {pass_label}\n"
-        f"・ワンオラクル無料枠: 1日{one_oracle_limit}回（本日の残り {one_remaining} 回）\n"
-        f"・相談チャット: {general_line}\n"
-        f"・3枚チケット: {user.tickets_3}枚\n"
-        f"・7枚チケット: {user.tickets_7}枚\n"
-        f"・10枚チケット: {user.tickets_10}枚\n"
-        f"・画像オプション: {'有効' if user.images_enabled else '無効'}\n"
-        f"・次回リセット: {format_next_reset(now)}"
-    )
+    lines = [
+        status_title,
+        f"・trial: 初回利用から{trial_day}日目",
+        f"・パス有効期限: {pass_label}",
+        f"・ワンオラクル無料枠: 1日{one_oracle_limit}回（本日の残り {one_remaining} 回）",
+        f"・相談チャット: {general_line}",
+        f"・3枚チケット: {user.tickets_3}枚",
+        f"・7枚チケット: {user.tickets_7}枚",
+        f"・10枚チケット: {user.tickets_10}枚",
+        f"・画像オプション: {'有効' if user.images_enabled else '無効'}",
+        f"・無料枠/カウントの次回リセット: {format_next_reset(now)}",
+    ]
+    if admin_mode:
+        lines.insert(1, "・管理者権限: あり（課金の制限を受けません）")
+    return "\n".join(lines)
 
 
 def build_unlock_text(product: Product, user: UserRecord) -> str:
+    now = utcnow()
     if product.sku in TICKET_SKU_TO_COLUMN:
         column = TICKET_SKU_TO_COLUMN[product.sku]
         balance = getattr(user, column)
         return f"{product.title}を追加しました。現在の残り枚数は {balance} 枚です。"
 
     if product.sku.startswith("PASS_"):
-        until = user.premium_until.isoformat(sep=" ") if user.premium_until else "有効期限を更新しました。"
-        duration = "7日間" if product.sku == "PASS_7D" else "30日間"
+        until = user.premium_until or user.pass_until
+        duration = "7日パス" if product.sku == "PASS_7D" else "30日パス"
+        if until:
+            until_local = until.astimezone(USAGE_TIMEZONE)
+            remaining_days = (_usage_today(until) - _usage_today(now)).days
+            remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
+            until_text = until_local.strftime("%Y-%m-%d %H:%M JST")
+        else:
+            until_text = "有効期限を更新しました。"
+            remaining_hint = ""
         return (
-            f"{duration}のパスをご利用いただけます。\n"
-            f"現在の有効期限: {until}"
+            f"{duration}を付与しました。\n"
+            f"有効期限: {until_text}{remaining_hint}"
         )
 
     if product.sku == "ADDON_IMAGES":
@@ -1044,6 +1126,7 @@ async def ensure_general_chat_safety(
 
 TERMS_CALLBACK_SHOW = "terms:show"
 TERMS_CALLBACK_AGREE = "terms:agree"
+TERMS_CALLBACK_AGREE_AND_BUY = "terms:agree_and_buy"
 
 
 def get_terms_text() -> str:
@@ -1096,6 +1179,7 @@ def build_terms_prompt_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="利用規約を確認", callback_data=TERMS_CALLBACK_SHOW)],
             [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)],
+            [InlineKeyboardButton(text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY)],
         ]
     )
 
@@ -1122,6 +1206,15 @@ def build_store_keyboard() -> InlineKeyboardMarkup:
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_purchase_followup_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎩占いに戻る", callback_data="nav:menu")],
+            [InlineKeyboardButton(text="📊ステータスを見る", callback_data="nav:status")],
+        ]
+    )
 
 
 async def send_store_menu(message: Message) -> None:
@@ -1173,6 +1266,24 @@ async def handle_terms_agree(query: CallbackQuery):
     if query.message:
         await query.message.answer(
             "利用規約への同意を記録しました。/buy から購入手続きに進めます。"
+        )
+
+
+@dp.callback_query(F.data == TERMS_CALLBACK_AGREE_AND_BUY)
+async def handle_terms_agree_and_buy(query: CallbackQuery):
+    await _safe_answer_callback(query, cache_time=1)
+    user_id = query.from_user.id if query.from_user else None
+    if user_id is None:
+        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
+        return
+
+    set_terms_accepted(user_id)
+    await _safe_answer_callback(query, "同意を記録しました。", show_alert=True)
+    if query.message:
+        await send_store_menu(query.message)
+    else:
+        await bot.send_message(
+            user_id, get_store_intro_text(), reply_markup=build_store_keyboard()
         )
 
 
@@ -1242,6 +1353,24 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
         )
 
 
+@dp.callback_query(F.data == "nav:status")
+async def handle_nav_status(query: CallbackQuery, state: FSMContext) -> None:
+    await _safe_answer_callback(query, cache_time=1)
+    user_id = query.from_user.id if query.from_user else None
+    if user_id is None:
+        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
+        return
+    await state.clear()
+    set_user_mode(user_id, "status")
+    now = utcnow()
+    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
+    formatted = format_status(user, now=now)
+    if query.message:
+        await query.message.answer(formatted, reply_markup=base_menu_kb())
+    else:
+        await bot.send_message(user_id, formatted, reply_markup=base_menu_kb())
+
+
 @dp.callback_query(F.data.startswith("buy:"))
 async def handle_buy_callback(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
@@ -1261,7 +1390,8 @@ async def handle_buy_callback(query: CallbackQuery):
         )
         return
 
-    ensure_user(user_id)
+    now = utcnow()
+    user = ensure_user(user_id, now=now)
     if product.sku == "ADDON_IMAGES" and not IMAGE_ADDON_ENABLED:
         await _safe_answer_callback(
             query, "画像追加オプションは準備中です。リリースまでお待ちください。", show_alert=True
@@ -1273,6 +1403,34 @@ async def handle_buy_callback(query: CallbackQuery):
             await query.message.answer(
                 f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
                 reply_markup=build_terms_prompt_keyboard(),
+            )
+        return
+
+    if product.sku == "TICKET_3":
+        has_pass = effective_has_pass(user_id, user, now=now)
+        if has_pass:
+            await _safe_answer_callback(
+                query,
+                "パスが有効なため、3枚スプレッドは追加購入なしでお使いいただけます。",
+                show_alert=True,
+            )
+            if query.message:
+                await query.message.answer(
+                    "パスが有効なので、追加のスリーカード購入は不要です。🎩占いから3枚スプレッドをお試しください。",
+                    reply_markup=base_menu_kb(),
+                )
+            return
+
+    if _check_purchase_dedup(user_id, product.sku):
+        await _safe_answer_callback(
+            query,
+            "購入画面は既に表示しています。開いている決済画面をご確認ください。",
+            show_alert=True,
+        )
+        if query.message:
+            await query.message.answer(
+                "同じ商品への購入確認を進行中です。開いている購入画面を確認してください。",
+                reply_markup=base_menu_kb(),
             )
         return
     payload = json.dumps({"sku": product.sku, "user_id": user_id})
@@ -1334,30 +1492,26 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     product = get_product(sku) if sku else None
     user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else None
     if not product:
-        await bot.answer_pre_checkout_query(
-            pre_checkout_query.id,
+        logger.warning(
+            "Pre-checkout received without product",
+            extra={"payload": pre_checkout_query.invoice_payload},
+        )
+        await _safe_answer_pre_checkout(
+            pre_checkout_query,
             ok=False,
             error_message="商品情報を確認できませんでした。最初からお試しください。",
         )
         return
     if payload_user_id is None or user_id is None or payload_user_id != user_id:
-        await bot.answer_pre_checkout_query(
-            pre_checkout_query.id,
+        await _safe_answer_pre_checkout(
+            pre_checkout_query,
             ok=False,
             error_message="購入者情報を確認できませんでした。もう一度お試しください。",
         )
         return
 
     ensure_user(user_id)
-    try:
-        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-    except TelegramBadRequest:
-        return
-    except Exception:
-        logger.exception(
-            "Failed to answer pre_checkout_query",
-            extra={"payload": pre_checkout_query.invoice_payload},
-        )
+    await _safe_answer_pre_checkout(pre_checkout_query, ok=True)
 
 
 @dp.message(F.successful_payment)
@@ -1392,16 +1546,18 @@ async def process_successful_payment(message: Message):
     if not created:
         await message.answer(
             "このお支払いはすでに処理済みです。/status から利用状況をご確認ください。",
-            reply_markup=base_menu_kb(),
+            reply_markup=build_purchase_followup_keyboard(),
         )
         return
     updated_user = grant_purchase(user_id, product.sku)
     unlock_message = build_unlock_text(product, updated_user)
-    await message.answer(
-        f"{product.title}のご購入ありがとうございました！\n{unlock_message}\n"
-        "いつでも /status でご利用状況を確認いただけます。",
-        reply_markup=base_menu_kb(),
-    )
+    thank_you_lines = [
+        f"{product.title}のご購入ありがとうございました！",
+        unlock_message,
+        "付与内容は /status でも確認できます。",
+        "下のボタンから占いに戻るか、ステータスを確認してください。",
+    ]
+    await message.answer("\n".join(thank_you_lines), reply_markup=build_purchase_followup_keyboard())
 
 
 @dp.message(Command("refund"))
