@@ -1703,6 +1703,90 @@ async def process_successful_payment(message: Message):
     await message.answer("\n".join(thank_you_lines), reply_markup=build_purchase_followup_keyboard())
 
 
+def _build_admin_grant_summary(user: UserRecord, product: Product, now: datetime) -> str:
+    pass_until = effective_pass_expires_at(user.user_id, user, now)
+    if pass_until:
+        pass_label = pass_until.astimezone(USAGE_TIMEZONE).strftime("%Y-%m-%d %H:%M JST")
+    else:
+        pass_label = "なし"
+    ticket_line = f"3枚={user.tickets_3} / 7枚={user.tickets_7} / 10枚={user.tickets_10}"
+    lines = [
+        f"付与が完了しました。{product.title}（SKU: {product.sku}）",
+        f"対象ユーザーID: {user.user_id}",
+        f"・パス有効期限: {pass_label}",
+        f"・チケット残数: {ticket_line}",
+        f"・画像オプション: {'有効' if user.images_enabled else '無効'}",
+        "ユーザーには /status のご案内をお願いします。迷子になった場合は /menu から戻れます。",
+    ]
+    return "\n".join(lines)
+
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    admin_id = message.from_user.id if message.from_user else None
+    if not is_admin_user(admin_id):
+        await message.answer("このコマンドは管理者専用です。")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        valid_skus = ", ".join(product.sku for product in iter_products())
+        await message.answer(
+            "管理者メニューです。サポート中のサブコマンド:\n"
+            "・/admin grant <user_id> <SKU> : 指定ユーザーに付与します。\n"
+            f"SKU候補: {valid_skus}"
+        )
+        return
+
+    subcommand = parts[1].lower()
+    if subcommand != "grant":
+        await message.answer("現在サポートしているのは grant のみです。/admin grant をご利用ください。")
+        return
+
+    if len(parts) < 4:
+        valid_skus = ", ".join(product.sku for product in iter_products())
+        await message.answer(
+            "使い方: /admin grant <user_id> <SKU>\n"
+            "例: /admin grant 123456789 PASS_7D\n"
+            f"SKU候補: {valid_skus}"
+        )
+        return
+
+    target_raw = parts[2].strip()
+    try:
+        target_user_id = int(target_raw)
+    except ValueError:
+        await message.answer("ユーザーIDは数字で指定してください。")
+        return
+
+    sku = parts[3].strip().upper()
+    product = get_product(sku)
+    if not product:
+        valid_skus = ", ".join(prod.sku for prod in iter_products())
+        await message.answer(f"SKUが認識できませんでした。利用可能なSKU: {valid_skus}")
+        return
+
+    try:
+        ensure_user(target_user_id)
+        updated_user = grant_purchase(target_user_id, product.sku, now=utcnow())
+        _safe_log_payment_event(
+            user_id=target_user_id,
+            event_type="admin_grant",
+            sku=product.sku,
+            payload=message.text,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to grant purchase via admin",
+            extra={"admin_id": admin_id, "target_user_id": target_user_id, "sku": sku},
+        )
+        await message.answer("付与処理でエラーが発生しました。ログを確認してください。")
+        return
+
+    summary = _build_admin_grant_summary(updated_user, product, utcnow())
+    await message.answer(summary)
+
+
 @dp.message(Command("refund"))
 async def cmd_refund(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
