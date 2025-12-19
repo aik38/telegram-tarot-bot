@@ -898,13 +898,34 @@ def get_start_text() -> str:
 
 
 def get_store_intro_text() -> str:
+    def _label(sku: str) -> str:
+        product = get_product(sku)
+        if not product:
+            return sku
+        return f"{product.title}（{product.price_stars}⭐️）"
+
+    ticket_3 = _label("TICKET_3")
+    ticket_7 = _label("TICKET_7")
+    ticket_10 = _label("TICKET_10")
+    pass_7d = _label("PASS_7D")
+    pass_30d = _label("PASS_30D")
+
     return (
-        "ご利用ありがとうございます。お悩みに合わせてお選びください。\n"
-        "・迷ったら：スリーカード(3枚)かケルト十字(10枚)でじっくり整理\n"
-        "・相談重視：7日/30日パスで相談チャットを解放\n"
-        "・決済はTelegram Stars (XTR) です。ゆっくりお進みください。\n"
-        "・価格（⭐️）は各メニューのボタンに表示されています。\n"
-        "・選択すると購入確認が表示されます。"
+        "ご利用ありがとうございます。目的に合わせてお選びください。\n"
+        "\n"
+        "🔮占いチケット\n"
+        f"・初めて/状況整理：{ticket_3}\n"
+        f"・深掘りしたい：{ticket_7}\n"
+        f"・じっくり決めたい：{ticket_10}\n"
+        "\n"
+        "💬相談パス（相談チャットが開放されます）\n"
+        f"・短期で試す：{pass_7d}\n"
+        f"・じっくり続ける：{pass_30d}\n"
+        "\n"
+        "パスをお持ちの方はそのまま占いに戻れば使えます。二重購入は不要です。\n"
+        "StarsはTelegram内の残高に保持され、余った分も次回にお使いいただけます。\n"
+        "決済はTelegram Stars (XTR) です。ゆっくりお進みください。\n"
+        "価格（⭐️）はボタンでもご確認いただけます。"
     )
 
 
