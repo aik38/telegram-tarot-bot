@@ -16,20 +16,17 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     LabeledPrice,
     Message,
     PreCheckoutQuery,
     ContentType,
-    ReplyKeyboardMarkup,
 )
-from bot.handlers import static_pages, reading_flow
-from bot.keyboards.main_menu import main_menu_kb as inline_main_menu_kb
-from bot.keyboards.common import nav_kb, menu_only_kb
+from bot.keyboards.common import base_menu_kb, nav_kb, menu_only_kb
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.utils.validators import validate_question_text
 from openai import (
@@ -88,6 +85,7 @@ from core.tarot import (
 from core.tarot.spreads import Spread
 from core.store.catalog import Product, get_product, iter_products
 
+from bot.texts.ja import HELP_TEXT
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -297,19 +295,39 @@ async def send_long_text(
     *,
     reply_to: int | None = None,
     edit_target: Message | None = None,
+    reply_markup_first: InlineKeyboardMarkup | None = None,
+    reply_markup_last: InlineKeyboardMarkup | None = None,
 ) -> None:
     chunks = split_text_for_sending(text)
     first_chunk, *rest = chunks
+    first_markup = reply_markup_last if not rest else reply_markup_first
     if edit_target:
         try:
-            await edit_target.edit_text(first_chunk)
+            await edit_target.edit_text(first_chunk, reply_markup=first_markup)
         except Exception:
-            await bot.send_message(chat_id, first_chunk, reply_to_message_id=reply_to)
+            await bot.send_message(
+                chat_id,
+                first_chunk,
+                reply_to_message_id=reply_to,
+                reply_markup=first_markup,
+            )
     else:
-        await bot.send_message(chat_id, first_chunk, reply_to_message_id=reply_to)
+        await bot.send_message(
+            chat_id,
+            first_chunk,
+            reply_to_message_id=reply_to,
+            reply_markup=first_markup,
+        )
 
-    for chunk in rest:
-        await bot.send_message(chat_id, chunk, reply_to_message_id=reply_to)
+    for index, chunk in enumerate(rest):
+        is_last = index == len(rest) - 1
+        markup = reply_markup_last if is_last else None
+        await bot.send_message(
+            chat_id,
+            chunk,
+            reply_to_message_id=reply_to,
+            reply_markup=markup,
+        )
 
 
 def _acquire_inflight(
@@ -495,19 +513,6 @@ def format_next_reset(now: datetime) -> str:
     return next_reset.strftime("%m/%d %H:%M JST")
 
 
-def persistent_main_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎩占い"), KeyboardButton(text="💬相談")],
-            [KeyboardButton(text="🛒チャージ"), KeyboardButton(text="📊ステータス")],
-        ],
-        is_persistent=True,
-        resize_keyboard=True,
-    )
-
-main_menu_kb = persistent_main_menu_kb
-
-
 def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -519,12 +524,20 @@ def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def build_upgrade_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="3枚で深掘り（有料）", callback_data="upgrade_to_three")]
+        ]
+    )
+
+
 async def prompt_tarot_mode(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, DEFAULT_THEME)
     set_tarot_flow(user_id, "awaiting_theme")
-    await message.answer(TAROT_THEME_PROMPT, reply_markup=main_menu_kb())
+    await message.answer(TAROT_THEME_PROMPT, reply_markup=base_menu_kb())
     await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
 
 
@@ -532,13 +545,13 @@ async def prompt_consult_mode(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
-    await message.answer(CONSULT_MODE_PROMPT, reply_markup=main_menu_kb())
+    await message.answer(CONSULT_MODE_PROMPT, reply_markup=base_menu_kb())
 
 
 async def prompt_charge_menu(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "charge")
-    await message.answer(CHARGE_MODE_PROMPT, reply_markup=main_menu_kb())
+    await message.answer(CHARGE_MODE_PROMPT, reply_markup=base_menu_kb())
     await send_store_menu(message)
 
 
@@ -548,11 +561,11 @@ async def prompt_status(message: Message, *, now: datetime) -> None:
     if user_id is None:
         await message.answer(
             "ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。",
-            reply_markup=main_menu_kb(),
+            reply_markup=base_menu_kb(),
         )
         return
     user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
-    await message.answer(format_status(user, now=now), reply_markup=main_menu_kb())
+    await message.answer(format_status(user, now=now), reply_markup=base_menu_kb())
 
 
 COMMAND_SPREAD_MAP: dict[str, Spread] = {
@@ -780,12 +793,8 @@ def get_start_text() -> str:
     bot_name = get_bot_display_name()
     return (
         f"こんにちは、AIタロット占いボット {bot_name} です。\n"
-        "🎩占い：テーマ→質問を送信（無料枠あり／追加は🛒チャージ）\n"
-        "・/read1 /love1：1枚引き\n"
-        "・/read3 /love3：3枚スプレッド\n"
-        "💬相談：なんでも話してね（trial中は1日2回ショート回答）\n"
-        "📊ステータス：残り回数・期限・次回リセット\n"
-        "コマンド：/buy /status /terms /support"
+        "下のボタンから「🎩占い」か「💬相談」を選んでください。\n"
+        "使い方は /help で確認できます。"
     )
 
 
@@ -1005,7 +1014,6 @@ async def ensure_general_chat_safety(
 
 TERMS_CALLBACK_SHOW = "terms:show"
 TERMS_CALLBACK_AGREE = "terms:agree"
-TERMS_CALLBACK_AGREE_AND_BUY = "terms:agree_buy"
 
 
 def get_terms_text() -> str:
@@ -1048,31 +1056,16 @@ TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意の上でお
 
 
 def build_terms_keyboard(include_buy_option: bool = False) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]
-    ]
-
-    if include_buy_option:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY
-                )
-            ]
-        )
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]]
+    )
 
 
 def build_terms_prompt_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="利用規約を確認", callback_data=TERMS_CALLBACK_SHOW)],
-            [
-                InlineKeyboardButton(
-                    text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY
-                )
-            ],
+            [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)],
         ]
     )
 
@@ -1107,6 +1100,11 @@ async def send_store_menu(message: Message) -> None:
     )
 
 
+@dp.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await message.answer(HELP_TEXT, reply_markup=menu_only_kb())
+
+
 @dp.message(Command("terms"))
 async def cmd_terms(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
@@ -1119,10 +1117,8 @@ async def cmd_terms(message: Message) -> None:
         await message.answer("利用規約への同意を記録しました。/buy からご購入いただけます。")
         return
 
-    await message.answer(
-        get_terms_text(), reply_markup=build_terms_keyboard(include_buy_option=True)
-    )
-    await message.answer("メニューに戻るときはボタンをご利用ください。", reply_markup=menu_only_kb())
+    await message.answer(get_terms_text(), reply_markup=build_terms_keyboard())
+    await message.answer("同意後は /buy から購入に進めます。", reply_markup=menu_only_kb())
 
 
 @dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
@@ -1147,20 +1143,6 @@ async def handle_terms_agree(query: CallbackQuery):
         await query.message.answer(
             "利用規約への同意を記録しました。/buy から購入手続きに進めます。"
         )
-
-
-@dp.callback_query(F.data == TERMS_CALLBACK_AGREE_AND_BUY)
-async def handle_terms_agree_and_buy(query: CallbackQuery):
-    user_id = query.from_user.id if query.from_user else None
-    if user_id is None:
-        await query.answer("ユーザー情報を確認できませんでした。", show_alert=True)
-        return
-
-    ensure_user(user_id)
-    set_terms_accepted(user_id)
-    await query.answer("同意を記録しました。", show_alert=True)
-    if query.message:
-        await send_store_menu(query.message)
 
 
 @dp.message(Command("support"))
@@ -1205,9 +1187,7 @@ async def cmd_love1(message: Message) -> None:
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, "love")
     set_tarot_flow(user_id, "awaiting_question")
-    await message.answer(
-        build_tarot_question_prompt("love"), reply_markup=main_menu_kb()
-    )
+    await message.answer(build_tarot_question_prompt("love"), reply_markup=base_menu_kb())
 
 
 @dp.message(CommandStart())
@@ -1215,8 +1195,20 @@ async def cmd_start(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
-    await message.answer(get_start_text(), reply_markup=persistent_main_menu_kb())
-    await message.answer("メニューはこちらからどうぞ。", reply_markup=inline_main_menu_kb())
+    await message.answer(get_start_text(), reply_markup=base_menu_kb())
+
+
+@dp.callback_query(F.data == "nav:menu")
+async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
+    user_id = query.from_user.id if query.from_user else None
+    reset_tarot_state(user_id)
+    set_user_mode(user_id, "consult")
+    await state.clear()
+    await query.answer()
+    if query.message:
+        await query.message.answer(
+            "メニューに戻りました。下のボタンから選んでください。", reply_markup=base_menu_kb()
+        )
 
 
 @dp.callback_query(F.data.startswith("buy:"))
@@ -1283,6 +1275,17 @@ async def handle_tarot_theme_select(query: CallbackQuery):
         await query.message.edit_text(prompt_text)
     elif user_id is not None:
         await bot.send_message(user_id, build_tarot_question_prompt(theme))
+
+
+@dp.callback_query(F.data == "upgrade_to_three")
+async def handle_upgrade_to_three(query: CallbackQuery):
+    await query.answer()
+    if query.message:
+        await query.message.answer(
+            "3枚スプレッドで深掘りするには /buy からチケットを購入してください。\n"
+            "決済が未開放の場合は少しお待ちください。",
+            reply_markup=build_store_keyboard(),
+        )
 
 
 @dp.pre_checkout_query()
@@ -1472,15 +1475,17 @@ async def handle_tarot_reading(
                 "bullet_count": bullet_count,
             },
         )
+        upgrade_markup = build_upgrade_keyboard() if spread_to_use.id == ONE_CARD.id else None
         if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
                 formatted_answer,
                 reply_to=getattr(message, "message_id", None),
                 edit_target=status_message,
+                reply_markup_last=upgrade_markup,
             )
         else:
-            await message.answer(formatted_answer)
+            await message.answer(formatted_answer, reply_markup=upgrade_markup)
     except Exception:
         logger.exception("Unexpected error during tarot reading")
         fallback = (
@@ -1682,7 +1687,7 @@ async def handle_message(message: Message) -> None:
     if not is_text:
         ok, error_message = validate_question_text(None, is_text=False)
         if not ok and error_message:
-            await message.answer(error_message, reply_markup=persistent_main_menu_kb())
+            await message.answer(error_message, reply_markup=base_menu_kb())
         return
 
     text = (message.text or "").strip()
@@ -1712,7 +1717,7 @@ async def handle_message(message: Message) -> None:
     if not text:
         await message.answer(
             "気になることをもう少し詳しく教えてくれるとうれしいです。",
-            reply_markup=persistent_main_menu_kb(),
+            reply_markup=base_menu_kb(),
         )
         return
 
@@ -1787,15 +1792,6 @@ async def handle_message(message: Message) -> None:
         return
 
     await handle_general_chat(message, user_query=text)
-
-reading_flow.setup_dependencies(
-    execute_tarot_request=execute_tarot_request,
-    get_start_text=get_start_text,
-    persistent_menu_kb=persistent_main_menu_kb,
-)
-dp.include_router(static_pages.create_router())
-dp.include_router(reading_flow.create_router())
-
 
 async def main() -> None:
     setup_logging()
