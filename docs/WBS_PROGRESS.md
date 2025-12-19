@@ -2,6 +2,9 @@
 
 目的: 決済導線の安定化が main にマージされた状態を棚卸しし、canonical WBS（docs/WBS.md）を更新したスナップショット。
 
+## 追加進捗
+- T1-05: テーマ別の質問例を拡充し、/help から辿れるように整理。(bot/main.py L130-L205, L1345-L1346; bot/texts/ja.py L1-L15; tests/test_bot_modes.py L71-L80)
+
 ## 今回完了扱いにした主な項目
 - /buy の導線と重複購入防止（dedup TTL + invoice 多重抑止）を確認。(bot/main.py L431-L447, L1187-L1449)
 - pre_checkout → successful_payment → 付与 → /status 導線が一連で動くことを確認。(bot/main.py L1490-L1560; core/db.py L214-L392)

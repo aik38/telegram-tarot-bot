@@ -4,7 +4,7 @@
 
 ## Next 10 tasks（優先度順・完了条件つき）
 1. [x] T1-08: 管理者用コマンド拡充（/admin grant）。完了条件: 管理者が /admin grant <user_id> <SKU> でパス/チケット/アドオンを安全に付与でき、成功/失敗時の案内が丁寧に返る。(bot/main.py L1706-L1777; tests/test_bot_modes.py L281-L310)
-2. [ ] T1-05: 例文（質問の例）をテーマ別に最小セットへ拡充し、/help からも辿れるようにする。完了条件: bot/main.py の例文がテーマ別に整理され、README か /help から到達できる。
+2. [x] T1-05: 例文（質問の例）をテーマ別に最小セットへ拡充し、/help からも辿れるようにする。完了条件: bot/main.py の例文がテーマ別に整理され、README か /help から到達できる。(bot/main.py L130-L205, L1345-L1346; bot/texts/ja.py L1-L15; tests/test_bot_modes.py L71-L80)
 3. [ ] T2-04: “引いたカード”表示フォーマットを固定し、全スプレッドで一貫する出力を保証する。完了条件: bot/main.py の出力が統一され、tests でフォーマット差分を検知できる。
 4. [ ] T2-05: スプレッドごとの役割語彙テンプレートを整備する。完了条件: core/tarot/spreads.py か関連モジュールに役割語彙が追加され、LLMプロンプトが活用できる。
 5. [ ] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）を拡充する。完了条件: tests/ 配下にカード/スプレッドの整合性を確認するテストが増え、pytest が通る。
@@ -44,7 +44,7 @@
 - [x] T1-02: メニュー（占い / 相談 / チャージ / ステータス 導線）(bot/main.py L1335-L1374)
 - [x] T1-03: `help`/`terms`/`support`/`paysupport` の整備 (bot/main.py L1226-L1308)
 - [x] T1-04: 入力ガード（空入力・長文等でも崩れない）(bot/utils/validators.py)
-- [~] T1-05: 例文（質問の例）をテーマ別に最小セット (bot/main.py L149-L169) ― 例文はあるが拡充余地。
+- [x] T1-05: 例文（質問の例）をテーマ別に最小セット (bot/main.py L130-L205, L1345-L1346; bot/texts/ja.py L1-L15; tests/test_bot_modes.py L71-L80)
 - [x] T1-06: 多重送信対策（連打・同時リクエストのキュー/ロック）(bot/main.py L342-L420)
 - [x] T1-07: “戻る/やり直し”導線（テーマ選択に戻る、メニュー復帰）(bot/main.py L1343-L1374)
 - [x] T1-08: 管理者用コマンド拡充（/admin grant など）(bot/main.py L1706-L1777; tests/test_bot_modes.py L281-L310)

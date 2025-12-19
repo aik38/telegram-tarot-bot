@@ -89,7 +89,7 @@ from core.tarot import (
 from core.tarot.spreads import Spread
 from core.store.catalog import Product, get_product, iter_products
 
-from bot.texts.ja import HELP_TEXT
+from bot.texts.ja import HELP_TEXT_TEMPLATE
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -135,11 +135,31 @@ TAROT_THEME_LABELS: dict[str, str] = {
 }
 
 TAROT_THEME_PROMPT = "🎩占いモードです。まずテーマを選んでください👇（恋愛/結婚/仕事/人生）"
-TAROT_THEME_EXAMPLES: dict[str, tuple[str, str, str]] = {
-    "love": ("あの人の気持ちは？", "連絡は来る？", "今月の恋愛運は？"),
-    "marriage": ("結婚のタイミングは？", "この人と結婚できる？", "結婚に向けて今すべきことは？"),
-    "work": ("来月の仕事運は？", "転職すべき？", "職場の人間関係は良くなる？"),
-    "life": ("来年の流れは？", "今いちばん大事にすべきことは？", "迷っている選択、どっちが良い？"),
+TAROT_THEME_EXAMPLES: dict[str, tuple[str, ...]] = {
+    "love": (
+        "片思いの相手の気持ちは？",
+        "連絡はいつ来る？",
+        "距離を縮めるには？",
+        "復縁の可能性は？",
+    ),
+    "marriage": (
+        "結婚のタイミングは？",
+        "この人と結婚できる？",
+        "プロポーズはうまくいく？",
+        "家族へ伝えるベストな時期は？",
+    ),
+    "work": (
+        "今の職場で評価を上げるには？",
+        "転職すべき？",
+        "来月の仕事運は？",
+        "職場の人間関係は良くなる？",
+    ),
+    "life": (
+        "今年の流れは？",
+        "今いちばん大事にすべきことは？",
+        "迷っている選択、どっちが良い？",
+        "金銭面は安定する？",
+    ),
 }
 CONSULT_MODE_PROMPT = (
     "💬相談モードです。なんでも相談してね。お話し聞くよ！"
@@ -156,6 +176,23 @@ CAUTION_KEYWORDS = {
     "legal": ["法律", "弁護士", "訴訟", "契約", "違法", "逮捕"],
     "investment": ["投資", "株", "fx", "仮想通貨", "利回り", "資産運用"],
 }
+
+
+def format_theme_examples_for_help() -> str:
+    lines: list[str] = []
+    for theme in TAROT_THEME_LABELS:
+        examples = TAROT_THEME_EXAMPLES.get(theme)
+        if not examples:
+            continue
+
+        joined = " / ".join(f"『{example}』" for example in examples)
+        lines.append(f"・{TAROT_THEME_LABELS[theme]}: {joined}")
+
+    return "\n".join(lines)
+
+
+def build_help_text() -> str:
+    return HELP_TEXT_TEMPLATE.format(theme_examples=format_theme_examples_for_help())
 
 
 def build_tarot_question_prompt(theme: str) -> str:
@@ -1306,7 +1343,7 @@ async def send_store_menu(message: Message) -> None:
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=menu_only_kb())
+    await message.answer(build_help_text(), reply_markup=menu_only_kb())
 
 
 @dp.message(Command("terms"))

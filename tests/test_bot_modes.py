@@ -68,6 +68,18 @@ def test_contains_tarot_like_detection():
     assert not contains_tarot_like("今日は友達と映画に行きました")
 
 
+def test_help_text_includes_theme_examples(monkeypatch):
+    bot_main = import_bot_main(monkeypatch)
+
+    help_text = bot_main.build_help_text()
+
+    assert "テーマ別の質問例" in help_text
+    for theme, label in bot_main.TAROT_THEME_LABELS.items():
+        assert label in help_text
+        for example in bot_main.TAROT_THEME_EXAMPLES[theme]:
+            assert example in help_text
+
+
 def test_general_chat_response_triggers_rewrite(monkeypatch):
     bot_main = import_bot_main(monkeypatch)
 
