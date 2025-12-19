@@ -3,16 +3,16 @@
 このドキュメントを **唯一のWBS** とし、進捗スナップショットは `docs/WBS_PROGRESS.md` に記録します（最終更新: 2025-05-06 UTC）。見た目よりも「落ちない」「迷子にならない」を最優先で維持します。
 
 ## Next 10 tasks（優先度順・完了条件つき）
-1. [x] 価格・SKUの最終確定（3枚=100⭐️など）を `core/store/catalog.py` と `docs/pricing_notes.md` に反映し、/buy の文面も一致させる。完了条件: カタログとドキュメントの価格が一致し、/buy で同じ価格が表示される。(core/store/catalog.py L18-L81; docs/pricing_notes.md L8-L15; bot/main.py L900-L929)
-2. [x] /buy の案内文と言い回しを強化し、「パス保持者は占いに戻る」導線と「どの商品を選べばよいか」を明示する。完了条件: get_store_intro_text などの出力にパス保持者向けの説明が追加され、文面レビュー済み。(bot/main.py L900-L929)
-3. [x] 決済イベント（buyクリック→pre_checkout→successful_payment→refund）を永続化するイベントログを追加し、重複検知やアラートに使える形にする。完了条件: 新しいイベントテーブルが生きており、各ステップでレコードが残る。(core/db.py `payment_events` + `log_payment_event`; bot/main.py buy/pre/refund各イベントで記録)
-4. [x] 決済導線のユニット/スモークテスト（payloadパース、重複防止TTL、権限付与）を pytest に追加し、CIで落ちないことを確認する。完了条件: `python -m pytest -q` が通り、テストが決済導線をカバーする。(根拠: tests/test_payment_flow.py L10-L69)
-5. [x] 手動スモークテスト手順（/buy 連打・stale callback・/status 反映）を簡潔にまとめ、リリース前チェックリストへ組み込む。完了条件: docs に手順が追加され、README から到達できる。(根拠: docs/launch_checklist.md L1-L14; README.md L4-L5)
-6. [x] stale/expired な callback/pre_checkout を検知した場合に、ユーザーへ「もう一度 /buy から進めてください」の再案内を自動送出する。完了条件: stale系エラーでユーザーに再案内が届くことを手動確認。(bot/main.py `_handle_stale_interaction` + staleメッセージ)
-7. [x] /status に「直近の購入SKU/付与時刻」を追加し、決済後に真実を語る導線を強化する。完了条件: /status 表示に最新購入情報が出る。(bot/main.py `format_status` に最新購入行)
-8. [x] 起動時のDBヘルスチェック（パス・スキーマ検証）を明示し、失敗時はログを出して安全に停止する。完了条件: 起動ログにDBチェック結果が出て、破損時に停止する。(core/db.py `check_db_health`; bot/main.py startupで強制実行)
-9. [x] 購入系 callback のレート制限/デュープ防御をチューニングし、連打でも落ちずに案内が返ることを保証する。完了条件: throttle/TTL設定が明文化され、連打検証で落ちないことを確認。(bot/main.py `PURCHASE_DEDUP_TTL_SECONDS=30s`, callback throttle=0.8s, stale誘導ボタン)
-10. [x] SQLite バックアップ/リストア手順（payments/users）を運用メモとして追加し、復旧パスを1枚にまとめる。完了条件: docs に手順があり、README からリンクされる。(根拠: docs/sqlite_backup.md L1-L45; README.md L4-L5)
+1. [x] T1-08: 管理者用コマンド拡充（/admin grant）。完了条件: 管理者が /admin grant <user_id> <SKU> でパス/チケット/アドオンを安全に付与でき、成功/失敗時の案内が丁寧に返る。(bot/main.py L1706-L1777; tests/test_bot_modes.py L281-L310)
+2. [ ] T1-05: 例文（質問の例）をテーマ別に最小セットへ拡充し、/help からも辿れるようにする。完了条件: bot/main.py の例文がテーマ別に整理され、README か /help から到達できる。
+3. [ ] T2-04: “引いたカード”表示フォーマットを固定し、全スプレッドで一貫する出力を保証する。完了条件: bot/main.py の出力が統一され、tests でフォーマット差分を検知できる。
+4. [ ] T2-05: スプレッドごとの役割語彙テンプレートを整備する。完了条件: core/tarot/spreads.py か関連モジュールに役割語彙が追加され、LLMプロンプトが活用できる。
+5. [ ] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）を拡充する。完了条件: tests/ 配下にカード/スプレッドの整合性を確認するテストが増え、pytest が通る。
+6. [ ] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）を明記し、ボットの応答に反映する。完了条件: bot/main.py で禁止テーマをガイドし、/terms か /help から確認できる。
+7. [ ] T3-05: “途中で別コマンド”が来たときの状態リセットルールを定義する。完了条件: state管理のルールがコード化され、tests で意図しない混線が起きないことを確認する。
+8. [ ] T3-06: 一定時間無操作で状態を破棄するタイムアウトを実装する。完了条件: 状態保持の期限が設定され、タイムアウト時の再案内が行われる。
+9. [ ] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生など）を実装する。完了条件: core/prompts.py か bot/main.py にテーマ別プロンプトが入り、レスポンスに反映される。
+10. [ ] T4-05: NG/危険領域の制御（医療/法律/自傷他害）を追加する。完了条件: 禁止テーマの検出と安全な応答が実装され、テストで確認できる。
 
 ## 記号ルール
 - `[ ]` 未着手 / ToDo
@@ -47,7 +47,7 @@
 - [~] T1-05: 例文（質問の例）をテーマ別に最小セット (bot/main.py L149-L169) ― 例文はあるが拡充余地。
 - [x] T1-06: 多重送信対策（連打・同時リクエストのキュー/ロック）(bot/main.py L342-L420)
 - [x] T1-07: “戻る/やり直し”導線（テーマ選択に戻る、メニュー復帰）(bot/main.py L1343-L1374)
-- [ ] T1-08: 管理者用コマンド拡充（/admin grant など）
+- [x] T1-08: 管理者用コマンド拡充（/admin grant など）(bot/main.py L1706-L1777; tests/test_bot_modes.py L281-L310)
 
 ---
 

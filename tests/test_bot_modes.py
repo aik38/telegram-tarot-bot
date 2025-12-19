@@ -278,6 +278,38 @@ def test_admin_cannot_refund(monkeypatch, tmp_path):
     assert any("管理者専用" in ans for ans in message.answers)
 
 
+def test_admin_grant_creates_pass(monkeypatch, tmp_path):
+    admin_id = 9001
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: fixed_now)
+
+    message = DummyMessage("/admin grant 4242 PASS_7D", user_id=admin_id)
+    asyncio.run(bot_main.cmd_admin(message))
+
+    user = bot_main.get_user(4242)
+    assert user is not None
+    assert user.pass_until is not None
+    expected_expiry = fixed_now + timedelta(days=7)
+    assert user.pass_until >= expected_expiry
+    assert any("付与が完了" in ans for ans in message.answers)
+    assert any("PASS_7D" in ans for ans in message.answers)
+
+
+def test_admin_grant_rejects_unknown_sku(monkeypatch, tmp_path):
+    admin_id = 9002
+    monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
+
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    message = DummyMessage("/admin grant 9999 UNKNOWN", user_id=admin_id)
+    asyncio.run(bot_main.cmd_admin(message))
+
+    assert any("SKU" in ans for ans in message.answers)
+    assert bot_main.get_user(9999) is None
+
+
 def test_admin_status_shows_virtual_pass(monkeypatch, tmp_path):
     admin_id = 9001
     monkeypatch.setenv("ADMIN_USER_IDS", str(admin_id))
