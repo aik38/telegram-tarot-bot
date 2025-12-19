@@ -140,3 +140,10 @@ git pull --rebase origin main; `
 git add .; `
 git commit -m "Update tarot bot from local"; `
 git push origin main
+
+
+## Dev routine (daily)
+1) Update local + test: `tools/sync.ps1` (double-click shortcut available)
+2) Pick next item from `docs/WBS.md` (Next 10 tasks)
+3) Use Codex (web) to implement 1 task per PR
+4) After merge: run sync again and smoke-test `/start` `/buy` `/status`
