@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -92,7 +93,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
 dp.message.middleware(ThrottleMiddleware())
-dp.callback_query.middleware(ThrottleMiddleware())
+# Callback queries should answer immediately; avoid throttling-induced delays.
+dp.callback_query.middleware(ThrottleMiddleware(apply_to_callbacks=False))
 IN_FLIGHT_USERS: set[int] = set()
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
@@ -173,6 +175,34 @@ def append_caution_note(user_text: str, response: str) -> str:
         return response
     separator = "\n\n" if not response.endswith("\n") else "\n"
     return f"{response}{separator}{CAUTION_NOTE}"
+
+
+async def _safe_answer_callback(query: CallbackQuery, *args, **kwargs) -> None:
+    try:
+        await query.answer(*args, **kwargs)
+    except TelegramBadRequest:
+        return
+    except Exception:
+        logger.exception("Failed to answer callback query", extra={"callback_data": query.data})
+
+
+def _parse_invoice_payload(payload: str) -> tuple[str | None, int | None]:
+    try:
+        payload_data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None, None
+
+    if not isinstance(payload_data, dict):
+        return None, None
+
+    sku = payload_data.get("sku")
+    user_id_raw = payload_data.get("user_id")
+    try:
+        user_id = int(user_id_raw) if user_id_raw is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+
+    return (str(sku) if sku is not None else None, user_id)
 
 
 def format_tarot_answer(text: str, card_line: str | None = None) -> str:
@@ -1123,7 +1153,7 @@ async def cmd_terms(message: Message) -> None:
 
 @dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
 async def handle_terms_show(query: CallbackQuery):
-    await query.answer()
+    await _safe_answer_callback(query, cache_time=1)
     if query.message:
         await query.message.answer(
             get_terms_text(), reply_markup=build_terms_prompt_keyboard()
@@ -1132,13 +1162,14 @@ async def handle_terms_show(query: CallbackQuery):
 
 @dp.callback_query(F.data == TERMS_CALLBACK_AGREE)
 async def handle_terms_agree(query: CallbackQuery):
+    await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
     if user_id is None:
-        await query.answer("ユーザー情報を確認できませんでした。", show_alert=True)
+        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
         return
 
     set_terms_accepted(user_id)
-    await query.answer("同意を記録しました。", show_alert=True)
+    await _safe_answer_callback(query, "同意を記録しました。", show_alert=True)
     if query.message:
         await query.message.answer(
             "利用規約への同意を記録しました。/buy から購入手続きに進めます。"
@@ -1200,11 +1231,11 @@ async def cmd_start(message: Message) -> None:
 
 @dp.callback_query(F.data == "nav:menu")
 async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
+    await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
     reset_tarot_state(user_id)
     set_user_mode(user_id, "consult")
     await state.clear()
-    await query.answer()
     if query.message:
         await query.message.answer(
             "メニューに戻りました。下のボタンから選んでください。", reply_markup=base_menu_kb()
@@ -1213,24 +1244,31 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
 
 @dp.callback_query(F.data.startswith("buy:"))
 async def handle_buy_callback(query: CallbackQuery):
+    await _safe_answer_callback(query, cache_time=1)
     data = query.data or ""
     sku = data.split(":", maxsplit=1)[1] if ":" in data else None
     product = get_product(sku) if sku else None
     if not product:
-        await query.answer("商品情報を取得できませんでした。少し時間をおいてお試しください。", show_alert=True)
+        await _safe_answer_callback(
+            query, "商品情報を取得できませんでした。少し時間をおいてお試しください。", show_alert=True
+        )
         return
 
     user_id = query.from_user.id if query.from_user else None
     if user_id is None:
-        await query.answer("ユーザーを特定できませんでした。個別チャットからお試しください。", show_alert=True)
+        await _safe_answer_callback(
+            query, "ユーザーを特定できませんでした。個別チャットからお試しください。", show_alert=True
+        )
         return
 
     ensure_user(user_id)
     if product.sku == "ADDON_IMAGES" and not IMAGE_ADDON_ENABLED:
-        await query.answer("画像追加オプションは準備中です。リリースまでお待ちください。", show_alert=True)
+        await _safe_answer_callback(
+            query, "画像追加オプションは準備中です。リリースまでお待ちください。", show_alert=True
+        )
         return
     if not has_accepted_terms(user_id):
-        await query.answer(TERMS_PROMPT_BEFORE_BUY, show_alert=True)
+        await _safe_answer_callback(query, TERMS_PROMPT_BEFORE_BUY, show_alert=True)
         if query.message:
             await query.message.answer(
                 f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。",
@@ -1249,27 +1287,29 @@ async def handle_buy_callback(query: CallbackQuery):
             currency="XTR",
             prices=prices,
         )
-    await query.answer("お支払い画面を開きます。ゆっくり進めてくださいね。")
+    await _safe_answer_callback(query, "お支払い画面を開きます。ゆっくり進めてくださいね。")
 
 
 @dp.callback_query(F.data == "addon:pending")
 async def handle_addon_pending(query: CallbackQuery):
-    await query.answer("画像追加オプションは準備中です。もう少しお待ちください。", show_alert=True)
+    await _safe_answer_callback(query, cache_time=1)
+    await _safe_answer_callback(query, "画像追加オプションは準備中です。もう少しお待ちください。", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("tarot_theme:"))
 async def handle_tarot_theme_select(query: CallbackQuery):
+    await _safe_answer_callback(query, cache_time=1)
     data = query.data or ""
     _, _, theme = data.partition(":")
     user_id = query.from_user.id if query.from_user else None
     if theme not in {"love", "marriage", "work", "life"}:
-        await query.answer("テーマを認識できませんでした。", show_alert=True)
+        await _safe_answer_callback(query, "テーマを認識できませんでした。", show_alert=True)
         return
 
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, theme)
     set_tarot_flow(user_id, "awaiting_question")
-    await query.answer("テーマを設定しました。")
+    await _safe_answer_callback(query, "テーマを設定しました。")
     if query.message:
         prompt_text = build_tarot_question_prompt(theme)
         await query.message.edit_text(prompt_text)
@@ -1279,7 +1319,7 @@ async def handle_tarot_theme_select(query: CallbackQuery):
 
 @dp.callback_query(F.data == "upgrade_to_three")
 async def handle_upgrade_to_three(query: CallbackQuery):
-    await query.answer()
+    await _safe_answer_callback(query, cache_time=1)
     if query.message:
         await query.message.answer(
             "3枚スプレッドで深掘りするには /buy からチケットを購入してください。\n"
@@ -1290,26 +1330,49 @@ async def handle_upgrade_to_three(query: CallbackQuery):
 
 @dp.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    sku, payload_user_id = _parse_invoice_payload(pre_checkout_query.invoice_payload or "")
+    product = get_product(sku) if sku else None
+    user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else None
+    if not product:
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query.id,
+            ok=False,
+            error_message="商品情報を確認できませんでした。最初からお試しください。",
+        )
+        return
+    if payload_user_id is None or user_id is None or payload_user_id != user_id:
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query.id,
+            ok=False,
+            error_message="購入者情報を確認できませんでした。もう一度お試しください。",
+        )
+        return
+
+    ensure_user(user_id)
+    try:
+        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    except TelegramBadRequest:
+        return
+    except Exception:
+        logger.exception(
+            "Failed to answer pre_checkout_query",
+            extra={"payload": pre_checkout_query.invoice_payload},
+        )
 
 
 @dp.message(F.successful_payment)
 async def process_successful_payment(message: Message):
     payment = message.successful_payment
-    payload_data: dict[str, object]
-    try:
-        payload_data = json.loads(payment.invoice_payload)
-    except json.JSONDecodeError:
-        payload_data = {}
-
-    sku = payload_data.get("sku") if isinstance(payload_data, dict) else None
-    user_id_payload = payload_data.get("user_id") if isinstance(payload_data, dict) else None
-    product = get_product(str(sku)) if sku else None
-    user_id = (
-        int(user_id_payload)
-        if isinstance(user_id_payload, (str, int))
-        else (message.from_user.id if message.from_user else None)
-    )
+    sku, payload_user_id = _parse_invoice_payload(payment.invoice_payload or "")
+    product = get_product(sku) if sku else None
+    user_id_message = message.from_user.id if message.from_user else None
+    user_id = payload_user_id if payload_user_id is not None else user_id_message
+    if user_id_message is not None and user_id is not None and user_id != user_id_message:
+        await message.answer(
+            "お支払い情報の確認に失敗しました。サポートまでお問い合わせください。\n"
+            "処理は完了している場合がありますので、ご安心ください。"
+        )
+        return
 
     if not product or user_id is None:
         await message.answer(
@@ -1328,14 +1391,16 @@ async def process_successful_payment(message: Message):
     )
     if not created:
         await message.answer(
-            "このお支払いはすでに処理済みです。/status から利用状況をご確認ください。"
+            "このお支払いはすでに処理済みです。/status から利用状況をご確認ください。",
+            reply_markup=base_menu_kb(),
         )
         return
     updated_user = grant_purchase(user_id, product.sku)
     unlock_message = build_unlock_text(product, updated_user)
     await message.answer(
         f"{product.title}のご購入ありがとうございました！\n{unlock_message}\n"
-        "いつでも /status でご利用状況を確認いただけます。"
+        "いつでも /status でご利用状況を確認いただけます。",
+        reply_markup=base_menu_kb(),
     )
 
 

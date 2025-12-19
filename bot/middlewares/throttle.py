@@ -8,9 +8,10 @@ from bot.texts.ja import THROTTLE_TEXT
 
 
 class ThrottleMiddleware(BaseMiddleware):
-    def __init__(self, min_interval_sec: float = 1.2) -> None:
+    def __init__(self, min_interval_sec: float = 1.2, apply_to_callbacks: bool = True) -> None:
         super().__init__()
         self.min_interval_sec = min_interval_sec
+        self.apply_to_callbacks = apply_to_callbacks
         self._last_seen: Dict[int, float] = {}
 
     async def __call__(
@@ -19,6 +20,9 @@ class ThrottleMiddleware(BaseMiddleware):
         event: CallbackQuery | Message,
         data: Dict[str, Any],
     ) -> Any:
+        if isinstance(event, CallbackQuery) and not self.apply_to_callbacks:
+            return await handler(event, data)
+
         user_id = self._get_user_id(event)
         now = time.monotonic()
         if user_id is not None:
