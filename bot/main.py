@@ -29,6 +29,7 @@ from aiogram.types import (
 )
 from bot.keyboards.common import base_menu_kb
 from bot.middlewares.throttle import ThrottleMiddleware
+from bot.utils.postprocess import postprocess_llm_text
 from bot.utils.replies import ensure_quick_menu
 from bot.utils.tarot_output import finalize_tarot_answer, format_time_axis_tarot_answer
 from bot.utils.validators import validate_question_text
@@ -141,6 +142,7 @@ class RequestIdMiddleware(BaseMiddleware):
 dp.message.middleware(RequestIdMiddleware())
 dp.callback_query.middleware(RequestIdMiddleware())
 IN_FLIGHT_USERS: set[int] = set()
+USER_REQUEST_LOCKS: dict[int, asyncio.Lock] = {}
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
 PENDING_PURCHASES: dict[tuple[int, str], float] = {}
@@ -699,28 +701,46 @@ async def send_long_text(
         )
 
 
-def _acquire_inflight(
+async def _acquire_inflight(
     user_id: int | None,
     message: Message | None = None,
     *,
     busy_message: str | None = "いま鑑定中です…少し待ってね。",
-) -> bool:
+) -> Callable[[], None]:
+    def _noop() -> None:
+        return None
+
     if user_id is None:
-        return True
-    if user_id in IN_FLIGHT_USERS:
-        if message:
-            reply_text = busy_message or ""
-            if reply_text:
-                asyncio.create_task(message.answer(reply_text))
-        return False
+        return _noop
+
+    lock = USER_REQUEST_LOCKS.setdefault(user_id, asyncio.Lock())
+    already_locked = lock.locked()
+    if already_locked and message:
+        reply_text = busy_message or ""
+        if reply_text:
+            asyncio.create_task(message.answer(reply_text))
+    await lock.acquire()
     IN_FLIGHT_USERS.add(user_id)
-    return True
+    logger.info(
+        "Acquired user request lock",
+        extra={
+            "user_id": user_id,
+            "queued": already_locked,
+        },
+    )
 
+    def _release() -> None:
+        if lock.locked():
+            lock.release()
+        IN_FLIGHT_USERS.discard(user_id)
+        logger.info(
+            "Released user request lock",
+            extra={
+                "user_id": user_id,
+            },
+        )
 
-def _release_inflight(user_id: int | None) -> None:
-    if user_id is None:
-        return
-    IN_FLIGHT_USERS.discard(user_id)
+    return _release
 
 
 def _mark_recent_handled(message: Message) -> bool:
@@ -862,7 +882,7 @@ async def call_openai_with_retry(messages: Iterable[dict[str, str]]) -> tuple[st
                 ),
             )
             answer = completion.choices[0].message.content
-            return answer, False
+            return postprocess_llm_text(answer), False
         except (AuthenticationError, PermissionDeniedError, BadRequestError) as exc:
             logger.exception("Fatal OpenAI error: %s", exc)
             return (
@@ -2242,8 +2262,7 @@ async def handle_tarot_reading(
     user_id = message.from_user.id if message.from_user else None
     chat_id = get_chat_id(message)
     can_use_bot = hasattr(message, "chat") and getattr(message.chat, "id", None) is not None
-    if not _acquire_inflight(user_id, message):
-        return
+    release_inflight = await _acquire_inflight(user_id, message)
 
     spread_to_use = spread or choose_spread(user_query)
     effective_theme = theme or get_tarot_theme(user_id)
@@ -2385,7 +2404,7 @@ async def handle_tarot_reading(
                 "total_handler_ms": round(total_ms, 2),
             },
         )
-        _release_inflight(user_id)
+        release_inflight()
 
 
 def _is_consult_intent(text: str) -> bool:
@@ -2496,10 +2515,9 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         },
     )
 
-    if not _acquire_inflight(
+    release_inflight = await _acquire_inflight(
         user_id, message, busy_message="いま返信中です…少し待ってね。"
-    ):
-        return
+    )
 
     try:
         openai_start = perf_counter()
@@ -2547,7 +2565,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 "total_handler_ms": round(total_ms, 2),
             },
         )
-        _release_inflight(user_id)
+        release_inflight()
 
 
 # Catch-all handler for non-command text messages
