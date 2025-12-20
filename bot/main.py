@@ -169,14 +169,8 @@ IMAGE_ADDON_ENABLED = os.getenv("IMAGE_ADDON_ENABLED", "false").strip().lower() 
     "yes",
     "on",
 }
-NON_CONSULT_OUT_OF_QUOTA_MESSAGE = (
-    "このボットはタロット占い・相談用です。占いは /read1、恋愛は /love1 などをご利用"
-    "ください。チャージは /buy です。"
-)
 GENERAL_CHAT_BLOCK_NOTICE_COOLDOWN = timedelta(hours=1)
 PURCHASE_DEDUP_TTL_SECONDS = 30.0
-STALE_CALLBACK_MESSAGE = "ボタンの有効期限が切れました。/buy からもう一度お願いします。"
-
 USER_MODE: dict[int, str] = {}
 TAROT_FLOW: dict[int, str | None] = {}
 TAROT_THEME: dict[int, str] = {}
@@ -190,7 +184,6 @@ TAROT_THEME_LABELS: dict[str, str] = {
     "life": "人生",
 }
 
-TAROT_THEME_PROMPT = "🎩占いモードです。まずテーマを選んでください👇（恋愛/結婚/仕事/人生）"
 TAROT_THEME_EXAMPLES: dict[str, tuple[str, ...]] = {
     "love": (
         "片思いの相手の気持ちは？",
@@ -332,14 +325,6 @@ def _get_position_label_translation(position_id: str, lang: str) -> str | None:
 def _get_position_meaning_translation(position_id: str, lang: str) -> str | None:
     lang_code = normalize_lang(lang)
     return (POSITION_MEANINGS_I18N.get(position_id) or {}).get(lang_code)
-CONSULT_MODE_PROMPT = (
-    "💬相談モードです。なんでも相談してね。お話し聞くよ！"
-)
-CHARGE_MODE_PROMPT = (
-    "🛒 チャージメニュー\n"
-    "チケット／パスを選んでください（Telegram Stars 決済）。"
-)
-STATUS_MODE_PROMPT = "📊現在のご利用状況です。"
 CAUTION_NOTE = (
     "※医療・法律・投資の判断は専門家にご相談ください（一般的な情報としてお伝えします）。"
 )
@@ -492,14 +477,16 @@ def build_help_text(lang: str | None = "ja") -> str:
     return template.format(theme_examples=format_theme_examples_for_help(lang_code))
 
 
-def build_tarot_question_prompt(theme: str) -> str:
-    theme_label = get_tarot_theme_label(theme)
-    examples = TAROT_THEME_EXAMPLES.get(theme, TAROT_THEME_EXAMPLES[DEFAULT_THEME])
-    example_text = "』『".join(examples)
-    return (
-        f"✅テーマ：{theme_label}。占いたいことを1つ送ってください。\n"
-        f"例：『{example_text}』"
-    )
+def build_tarot_question_prompt(theme: str, *, lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    theme_labels = _get_theme_labels(lang_code)
+    theme_label = theme_labels.get(theme, theme_labels.get(DEFAULT_THEME, get_tarot_theme_label(DEFAULT_THEME)))
+    examples = _get_theme_examples(lang_code).get(theme, TAROT_THEME_EXAMPLES[DEFAULT_THEME])
+    if lang_code == "ja":
+        example_text = "』『".join(examples)
+    else:
+        example_text = "” / “".join(examples)
+    return t(lang_code, "TAROT_QUESTION_PROMPT", theme_label=theme_label, example_text=example_text)
 
 
 def _contains_caution_keyword(text: str) -> bool:
@@ -1183,8 +1170,11 @@ async def _handle_stale_interaction(
         logger.warning("Stale interaction detected but no user/chat to notify", extra={"payload": payload})
         return
     try:
+        lang = get_user_lang_or_default(user_id)
         target = chat_id if chat_id is not None else user_id
-        await bot.send_message(target, STALE_CALLBACK_MESSAGE, reply_markup=_build_charge_retry_keyboard())
+        await bot.send_message(
+            target, t(lang, "STALE_CALLBACK_MESSAGE"), reply_markup=_build_charge_retry_keyboard()
+        )
     except Exception:
         logger.exception("Failed to notify user about stale interaction", extra={"payload": payload, "user_id": user_id})
 
@@ -1404,7 +1394,7 @@ async def reset_state_if_inactive(message: Message, *, now: datetime) -> bool:
         return False
     reset_conversation_state(user_id)
     await message.answer(
-        "しばらく操作がなかったため状態をリセットしました。/start か /help からやり直してください。",
+        t(get_user_lang_or_default(user_id), "INACTIVE_RESET_NOTICE"),
         reply_markup=build_base_menu(user_id),
     )
     return True
@@ -1427,21 +1417,23 @@ def format_next_reset(now: datetime) -> str:
     return next_reset.strftime("%m/%d %H:%M JST")
 
 
-def build_tarot_theme_keyboard() -> InlineKeyboardMarkup:
+def build_tarot_theme_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="❤️恋愛", callback_data="tarot_theme:love")],
-            [InlineKeyboardButton(text="💍結婚", callback_data="tarot_theme:marriage")],
-            [InlineKeyboardButton(text="💼仕事", callback_data="tarot_theme:work")],
-            [InlineKeyboardButton(text="🌉人生", callback_data="tarot_theme:life")],
+            [InlineKeyboardButton(text=t(lang_code, "TAROT_THEME_BUTTON_LOVE"), callback_data="tarot_theme:love")],
+            [InlineKeyboardButton(text=t(lang_code, "TAROT_THEME_BUTTON_MARRIAGE"), callback_data="tarot_theme:marriage")],
+            [InlineKeyboardButton(text=t(lang_code, "TAROT_THEME_BUTTON_WORK"), callback_data="tarot_theme:work")],
+            [InlineKeyboardButton(text=t(lang_code, "TAROT_THEME_BUTTON_LIFE"), callback_data="tarot_theme:life")],
         ]
     )
 
 
-def build_upgrade_keyboard() -> InlineKeyboardMarkup:
+def build_upgrade_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="3枚で深掘り（有料）", callback_data="upgrade_to_three")]
+            [InlineKeyboardButton(text=t(lang_code, "UPGRADE_BUTTON_TEXT"), callback_data="upgrade_to_three")]
         ]
     )
 
@@ -1452,8 +1444,12 @@ async def prompt_tarot_mode(message: Message) -> None:
     set_tarot_theme(user_id, DEFAULT_THEME)
     set_tarot_flow(user_id, "awaiting_theme")
     mark_user_active(user_id)
-    await message.answer(TAROT_THEME_PROMPT, reply_markup=build_base_menu(user_id))
-    await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "TAROT_THEME_PROMPT"), reply_markup=build_base_menu(user_id))
+    await message.answer(
+        t(lang, "TAROT_THEME_SELECT_PROMPT"),
+        reply_markup=build_tarot_theme_keyboard(lang=lang),
+    )
 
 
 async def prompt_consult_mode(message: Message) -> None:
@@ -1461,14 +1457,16 @@ async def prompt_consult_mode(message: Message) -> None:
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
     mark_user_active(user_id)
-    await message.answer(CONSULT_MODE_PROMPT, reply_markup=build_base_menu(user_id))
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "CONSULT_MODE_PROMPT"), reply_markup=build_base_menu(user_id))
 
 
 async def prompt_charge_menu(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "charge")
     mark_user_active(user_id)
-    await message.answer(CHARGE_MODE_PROMPT, reply_markup=build_base_menu(user_id))
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "CHARGE_MODE_PROMPT"), reply_markup=build_base_menu(user_id))
     await send_store_menu(message)
 
 
@@ -1721,28 +1719,11 @@ async def execute_tarot_request(
 
 def get_start_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
-    if lang_code == "ja":
-        return (
-            "こんにちは、タロット占い＆お悩み相談 tarot_cat です🐈‍⬛\n"
-            "ワンオラクルは1日2回まで無料でカードを引けます（/read1）。\n"
-            "\n"
-            "もっとじっくり占いたい方や、\n"
-            "トークや相談を自由に使いたい方には7日／30日パスも用意しています。\n"
-            "\n"
-            "下のボタンから\n"
-            "「🎩占い」または「💬相談」を選んでください。\n"
-            "使い方は /help で確認できます。\n"
-        )
     return t(lang_code, "START_TEXT")
 
 
 def get_store_intro_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
-    if lang_code == "ja":
-        return (
-            "購入後は、そのまま「🎩占い」や「💬相談」に戻れます。\n"
-            "Stars はアカウント内に残り、余った分は次回も使えます。\n"
-        )
     return t(lang_code, "STORE_INTRO_TEXT")
 
 
@@ -1758,7 +1739,7 @@ def format_status(user: UserRecord, *, now: datetime | None = None, lang: str | 
     now = now or utcnow()
     pass_until = effective_pass_expires_at(user.user_id, user, now)
     has_pass = effective_has_pass(user.user_id, user, now=now)
-    status_title = STATUS_MODE_PROMPT
+    status_title = t(lang_code, "STATUS_MODE_PROMPT")
     admin_mode = is_admin_user(user.user_id)
     if admin_mode:
         status_title = "📊現在のご利用状況（管理者モード）です。"
@@ -2478,7 +2459,10 @@ async def cmd_love1(message: Message) -> None:
     set_tarot_theme(user_id, "love")
     set_tarot_flow(user_id, "awaiting_question")
     mark_user_active(user_id)
-    await message.answer(build_tarot_question_prompt("love"), reply_markup=build_base_menu(user_id))
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(
+        build_tarot_question_prompt("love", lang=lang), reply_markup=build_base_menu(user_id)
+    )
 
 
 @dp.message(CommandStart())
@@ -2573,7 +2557,9 @@ async def handle_nav_charge(query: CallbackQuery, state: FSMContext) -> None:
     if query.message:
         await prompt_charge_menu(query.message)
     elif user_id is not None:
-        await bot.send_message(user_id, CHARGE_MODE_PROMPT, reply_markup=build_base_menu(user_id))
+        await bot.send_message(
+            user_id, t(lang, "CHARGE_MODE_PROMPT"), reply_markup=build_base_menu(user_id)
+        )
         await bot.send_message(
             user_id,
             get_store_intro_text(lang=lang),
@@ -2707,12 +2693,13 @@ async def handle_tarot_theme_select(query: CallbackQuery):
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, theme)
     set_tarot_flow(user_id, "awaiting_question")
-    await _safe_answer_callback(query, "テーマを設定しました。")
+    lang = get_user_lang_or_default(user_id)
+    await _safe_answer_callback(query, t(lang, "TAROT_THEME_SET_CONFIRMATION"))
     if query.message:
-        prompt_text = build_tarot_question_prompt(theme)
+        prompt_text = build_tarot_question_prompt(theme, lang=lang)
         await query.message.edit_text(prompt_text)
     elif user_id is not None:
-        await bot.send_message(user_id, build_tarot_question_prompt(theme))
+        await bot.send_message(user_id, build_tarot_question_prompt(theme, lang=lang))
 
 
 @dp.callback_query(F.data == "upgrade_to_three")
@@ -3208,7 +3195,7 @@ async def handle_tarot_reading(
                 "bullet_count": bullet_count,
             },
         )
-        upgrade_markup = build_upgrade_keyboard() if spread_to_use.id == ONE_CARD.id else None
+        upgrade_markup = build_upgrade_keyboard(lang=lang_code) if spread_to_use.id == ONE_CARD.id else None
         if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
@@ -3353,7 +3340,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         ):
             paywall_triggered = True
             if not consult_intent:
-                await message.answer(NON_CONSULT_OUT_OF_QUOTA_MESSAGE)
+                await message.answer(t(lang, "NON_CONSULT_OUT_OF_QUOTA_MESSAGE"))
                 return
 
             full_notice = _should_show_general_chat_full_notice(user, now)
@@ -3486,6 +3473,7 @@ async def handle_message(message: Message) -> None:
     if await reset_state_if_inactive(message, now=now):
         return
     mark_user_active(user_id, now=now)
+    lang = get_user_lang_or_default(user_id)
     menu_markup = build_base_menu(user_id)
     quick_menu = build_quick_menu(user_id)
     admin_mode = is_admin_user(user_id)
@@ -3547,7 +3535,7 @@ async def handle_message(message: Message) -> None:
 
     if tarot_flow == "awaiting_theme":
         await message.answer(
-            TAROT_THEME_PROMPT, reply_markup=build_tarot_theme_keyboard()
+            t(lang, "TAROT_THEME_PROMPT"), reply_markup=build_tarot_theme_keyboard(lang=lang)
         )
         return
 

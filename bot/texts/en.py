@@ -91,4 +91,30 @@ TEXTS = {
     "STATUS_IMAGES_OFF": "disabled",
     "STATUS_RESET": "• Next reset for free limits: {reset_time}",
     "STATUS_LATEST_PURCHASE": "• Latest purchase: {label} / SKU: {sku} (granted: {purchased_at})",
+    "NON_CONSULT_OUT_OF_QUOTA_MESSAGE": (
+        "This bot is for tarot readings and chat. Use /read1 for readings or /love1 for love topics. "
+        "Top up via /buy."
+    ),
+    "STALE_CALLBACK_MESSAGE": "The button has expired. Please open /buy again.",
+    "TAROT_THEME_PROMPT": "🎩 Tarot mode. Choose a theme below (Love/Marriage/Work/Life).",
+    "TAROT_THEME_SELECT_PROMPT": "Please choose a theme 👇",
+    "TAROT_QUESTION_PROMPT": (
+        "✅ Theme: {theme_label}. Send one question you want to ask.\n"
+        "Example: “{example_text}”"
+    ),
+    "TAROT_THEME_SET_CONFIRMATION": "Theme set.",
+    "TAROT_THEME_BUTTON_LOVE": "❤️ Love",
+    "TAROT_THEME_BUTTON_MARRIAGE": "💍 Marriage",
+    "TAROT_THEME_BUTTON_WORK": "💼 Work",
+    "TAROT_THEME_BUTTON_LIFE": "🌉 Life",
+    "UPGRADE_BUTTON_TEXT": "3-card deep dive (paid)",
+    "CONSULT_MODE_PROMPT": "💬 Chat mode. I'm here to listen—tell me anything!",
+    "CHARGE_MODE_PROMPT": (
+        "🛒 Store menu\n"
+        "Choose a ticket or pass (paid with Telegram Stars)."
+    ),
+    "STATUS_MODE_PROMPT": "📊 Your current usage.",
+    "INACTIVE_RESET_NOTICE": (
+        "The session was reset after inactivity. Please start again with /start or /help."
+    ),
 }
