@@ -4,7 +4,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 import pytest
 
 from core.tarot import contains_tarot_like, is_tarot_request
@@ -198,6 +198,10 @@ def test_start_payload_sets_lang(monkeypatch, tmp_path):
     from core import db as core_db
 
     assert core_db.get_user_lang(100) == "en"
+    assert message.reply_markups
+    assert isinstance(message.reply_markups[0], ReplyKeyboardMarkup)
+    first_row = [btn.text for btn in message.reply_markups[0].keyboard[0]]
+    assert first_row == ["🎩 Tarot", "💬 Chat"]
 
 
 def test_start_prefers_saved_lang(monkeypatch, tmp_path):
@@ -228,6 +232,21 @@ def test_lang_command_and_callback(monkeypatch, tmp_path):
 
     assert core_db.get_user_lang(300) == "pt"
     assert any("言語設定を保存しました" in ans for ans in message.answers)
+
+
+def test_menu_routing_by_emoji(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    called = {"tarot": False}
+
+    async def fake_prompt_tarot_mode(message):
+        called["tarot"] = True
+
+    monkeypatch.setattr(bot_main, "prompt_tarot_mode", fake_prompt_tarot_mode)
+
+    message = DummyMessage("🎩 Tarot", user_id=400)
+    asyncio.run(bot_main.handle_message(message))
+
+    assert called["tarot"] is True
 
 
 def test_paywall_blocks_paid_spread(monkeypatch, tmp_path):

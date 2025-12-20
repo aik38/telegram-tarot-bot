@@ -34,6 +34,20 @@ def test_base_menu_layout():
     assert [button.text for button in markup.keyboard[1]] == ["🛒チャージ", "📊ステータス"]
 
 
+def test_base_menu_layout_en():
+    markup = base_menu_kb(lang="en")
+
+    assert [button.text for button in markup.keyboard[0]] == ["🎩 Tarot", "💬 Chat"]
+    assert [button.text for button in markup.keyboard[1]] == ["🛒 Store", "📊 Status"]
+
+
+def test_base_menu_layout_pt():
+    markup = base_menu_kb(lang="pt")
+
+    assert [button.text for button in markup.keyboard[0]] == ["🎩 Tarot", "💬 Conversa"]
+    assert [button.text for button in markup.keyboard[1]] == ["🛒 Loja", "📊 Status"]
+
+
 def test_help_and_terms_attach_quick_menu(monkeypatch, tmp_path):
     bot_main = import_bot_main(monkeypatch, tmp_path)
 
