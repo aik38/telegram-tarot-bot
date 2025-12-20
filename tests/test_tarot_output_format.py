@@ -1,3 +1,8 @@
+import os
+
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "123456:TESTTOKEN")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+
 from bot.main import CAUTION_NOTE
 from bot.utils.tarot_output import finalize_tarot_answer
 

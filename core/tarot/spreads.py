@@ -32,16 +32,21 @@ ONE_CARD = Spread(
     position_labels=("メインメッセージ",),
 )
 
-THREE_CARD_SITUATION = Spread(
-    id="three_card_situation",
-    name_ja="3枚引き（状況・障害・未来）",
+THREE_CARD_TIME_AXIS = Spread(
+    id="three_card_time_axis",
+    name_ja="3枚引き（時間軸）",
     positions=[
-        SpreadPosition("situation", "現在の状況", "いまの状況・前提を表します。"),
-        SpreadPosition("obstacle", "障害や課題", "乗り越えるべき障害や課題を表します。"),
-        SpreadPosition("future", "未来の可能性", "流れの先にある可能性を表します。"),
+        SpreadPosition("past", "過去の影響", "これまでの出来事や感情が、いまの状況にどう影響しているかを示します。"),
+        SpreadPosition("present", "現在の状態", "いま感じている迷いや停滞、分岐点を整理します。"),
+        SpreadPosition(
+            "future",
+            "未来の流れ",
+            "この先の流れや可能性、注意点を示し、過去や現在への警告も含めて読み解きます。",
+        ),
     ],
-    position_labels=("現在", "障害", "未来"),
+    position_labels=("過去", "現在", "未来"),
 )
+THREE_CARD_SITUATION = THREE_CARD_TIME_AXIS
 
 HEXAGRAM = Spread(
     id="hexagram",
@@ -129,7 +134,7 @@ CELTIC_CROSS = Spread(
 
 ALL_SPREADS: dict[str, Spread] = {
     ONE_CARD.id: ONE_CARD,
-    THREE_CARD_SITUATION.id: THREE_CARD_SITUATION,
+    THREE_CARD_TIME_AXIS.id: THREE_CARD_TIME_AXIS,
     HEXAGRAM.id: HEXAGRAM,
     CELTIC_CROSS.id: CELTIC_CROSS,
 }
@@ -138,6 +143,7 @@ __all__ = [
     "SpreadPosition",
     "Spread",
     "ONE_CARD",
+    "THREE_CARD_TIME_AXIS",
     "THREE_CARD_SITUATION",
     "HEXAGRAM",
     "CELTIC_CROSS",

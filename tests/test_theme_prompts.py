@@ -76,9 +76,9 @@ def test_position_labels_are_injected_into_answer():
     formatted = format_tarot_answer(
         answer,
         card_line=card_line,
-        position_labels=("現在", "障害", "未来"),
+        position_labels=("過去", "現在", "未来"),
     )
 
     assert "【現在】" in formatted
-    assert "【障害】" in formatted
+    assert "【過去】" in formatted
     assert "【未来】" in formatted
