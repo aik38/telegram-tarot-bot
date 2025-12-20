@@ -30,6 +30,7 @@ from aiogram.types import (
 from bot.keyboards.common import base_menu_kb
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.utils.replies import ensure_quick_menu
+from bot.utils.tarot_output import finalize_tarot_answer
 from bot.utils.validators import validate_question_text
 from openai import (
     APIConnectionError,
@@ -2266,6 +2267,11 @@ async def handle_tarot_reading(
         if guidance_note:
             formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
         formatted_answer = append_caution_note(user_query, formatted_answer)
+        formatted_answer = finalize_tarot_answer(
+            formatted_answer,
+            card_line_prefix=CARD_LINE_PREFIX,
+            caution_note=CAUTION_NOTE,
+        )
         bullet_count = sum(
             1 for line in formatted_answer.splitlines() if line.lstrip().startswith("・")
         )
