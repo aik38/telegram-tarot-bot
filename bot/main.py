@@ -176,6 +176,76 @@ CAUTION_KEYWORDS = {
     "legal": ["法律", "弁護士", "訴訟", "契約", "違法", "逮捕"],
     "investment": ["投資", "株", "fx", "仮想通貨", "利回り", "資産運用"],
 }
+SENSITIVE_TOPICS: dict[str, list[str]] = {
+    "medical": [
+        "病気",
+        "症状",
+        "診断",
+        "薬",
+        "治療",
+        "受診",
+        "病院",
+        "メンタル",
+        "鬱",
+        "うつ",
+        "パニック",
+    ],
+    "legal": [
+        "法律",
+        "弁護士",
+        "訴訟",
+        "裁判",
+        "契約",
+        "違法",
+        "逮捕",
+        "示談",
+        "告訴",
+    ],
+    "investment": [
+        "投資",
+        "株",
+        "fx",
+        "先物",
+        "仮想通貨",
+        "利回り",
+        "資産運用",
+        "配当",
+        "儲かる",
+    ],
+    "self_harm": [
+        "自殺",
+        "死にたい",
+        "消えたい",
+        "希死念慮",
+        "リストカット",
+        "傷つけたい",
+        "助けて",
+    ],
+    "violence": [
+        "暴力",
+        "傷害",
+        "危害",
+        "脅迫",
+        "復讐",
+        "殺",
+        "殴る",
+        "危険",
+    ],
+}
+SENSITIVE_TOPIC_LABELS: dict[str, str] = {
+    "investment": "投資・資産運用",
+    "legal": "法律・契約・紛争",
+    "medical": "医療・健康",
+    "self_harm": "自傷・強い不安",
+    "violence": "暴力・他害",
+}
+SENSITIVE_TOPIC_GUIDANCE: dict[str, str] = {
+    "medical": "診断や治療はできません。体調の変化や不安があるときは早めに医療機関へご相談ください。",
+    "legal": "法的判断や契約書の確認は弁護士などの専門家へお任せください。",
+    "investment": "投資助言や利回りの断定は行いません。資金計画は金融機関・専門家とご確認ください。",
+    "self_harm": "命の危険を感じるときは、迷わず救急や自治体・専門の相談窓口へ連絡してください。ひとりで抱え込まないでください。",
+    "violence": "危険が迫っている場合は安全な場所へ移動し、警察など公的機関へ相談してください。",
+}
 
 
 def format_theme_examples_for_help() -> str:
@@ -218,6 +288,49 @@ def append_caution_note(user_text: str, response: str) -> str:
         return response
     separator = "\n\n" if not response.endswith("\n") else "\n"
     return f"{response}{separator}{CAUTION_NOTE}"
+
+
+def classify_sensitive_topics(text: str) -> set[str]:
+    if not text:
+        return set()
+
+    lowered = text.lower()
+    hits: set[str] = set()
+    for topic, keywords in SENSITIVE_TOPICS.items():
+        if any(keyword in lowered for keyword in keywords):
+            hits.add(topic)
+    return hits
+
+
+def build_sensitive_topic_notice(topics: set[str]) -> str:
+    if not topics:
+        return ""
+
+    topic_labels = [SENSITIVE_TOPIC_LABELS.get(topic, topic) for topic in sorted(topics)]
+    joined_labels = " / ".join(topic_labels)
+    lines = [
+        f"🚫 以下のテーマは専門家への相談が必要なため、占いとして断定はできません: {joined_labels}。",
+        "・感じている症状やトラブルは、必ず医療機関・弁護士・公的機関などの専門窓口へご相談ください。",
+    ]
+    for topic in sorted(topics):
+        guidance = SENSITIVE_TOPIC_GUIDANCE.get(topic)
+        if guidance:
+            lines.append(f"・{guidance}")
+
+    lines.append(
+        "占いとしては、気持ちや状況の整理、日常でできそうなセルフケアや次の一歩に焦点を当てましょう。"
+    )
+    lines.append("禁止/注意テーマの一覧は /help または /terms から確認できます。")
+    return "\n".join(lines)
+
+
+async def respond_with_safety_notice(message: Message, user_query: str) -> bool:
+    topics = classify_sensitive_topics(user_query)
+    if not topics:
+        return False
+
+    await message.answer(build_sensitive_topic_notice(topics), reply_markup=nav_kb())
+    return True
 
 
 def _is_stale_query_error(error: Exception | str) -> bool:
@@ -906,6 +1019,22 @@ async def execute_tarot_request(
     allowed = True
     effective_theme = theme or get_tarot_theme(user_id)
 
+    if await respond_with_safety_notice(message, user_query):
+        logger.info(
+            "Safety notice triggered",
+            extra={
+                "mode": "tarot",
+                "user_id": user_id,
+                "admin_mode": is_admin_user(user_id),
+                "text_preview": _preview_text(user_query),
+                "route": "tarot_safety",
+                "tarot_flow": TAROT_FLOW.get(user_id),
+                "tarot_theme": effective_theme,
+                "paywall_triggered": paywall_triggered,
+            },
+        )
+        return
+
     if spread_to_use == ONE_CARD:
         if user_id is not None and user is not None:
             allowed, short_response, user = _evaluate_one_oracle_access(
@@ -1240,7 +1369,7 @@ def get_terms_text() -> str:
     return (
         "利用規約（抜粋）\n"
         "・18歳以上の自己責任で利用してください。\n"
-        "・医療/法律/投資など専門判断は提供しません。\n"
+        "・禁止/注意テーマ（医療/診断/薬、法律/契約/紛争、投資助言、自傷/他害）は専門家へご相談ください。\n"
         "・迷惑行為・違法行為への利用は禁止です。\n"
         "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
         f"・連絡先: {support_email}\n\n"
@@ -2048,6 +2177,21 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     can_use_bot = chat_id_value is not None
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
     paywall_triggered = False
+
+    if await respond_with_safety_notice(message, user_query):
+        logger.info(
+            "Safety notice triggered",
+            extra={
+                "mode": "chat",
+                "user_id": user_id,
+                "text_preview": _preview_text(user_query),
+                "tarot_flow": TAROT_FLOW.get(user_id),
+                "tarot_theme": get_tarot_theme(user_id),
+                "route": "consult_safety",
+                "paywall_triggered": paywall_triggered,
+            },
+        )
+        return
 
     if user is not None:
         trial_active = _is_in_general_chat_trial(user, now)

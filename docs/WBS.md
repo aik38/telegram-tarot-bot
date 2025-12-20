@@ -8,17 +8,21 @@
 3. [x] T2-04: “引いたカード”表示フォーマットを固定し、全スプレッドで一貫する出力を保証する。完了条件: bot/main.py の出力が統一され、tests でフォーマット差分を検知できる。(bot/main.py L1171-L1186; tests/test_drawn_cards_format.py L28-L74)
 4. [ ] T2-05: スプレッドごとの役割語彙テンプレートを整備する。完了条件: core/tarot/spreads.py か関連モジュールに役割語彙が追加され、LLMプロンプトが活用できる。
 5. [~] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）を拡充する。完了条件: tests/ 配下にカード/スプレッドの整合性を確認するテストが増え、pytest が通る。(tests/test_drawn_cards_format.py L28-L74 でフォーマット差分検知を追加)
-6. [ ] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）を明記し、ボットの応答に反映する。完了条件: bot/main.py で禁止テーマをガイドし、/terms か /help から確認できる。
+6. [x] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）を明記し、ボットの応答に反映する。完了条件: bot/main.py で禁止テーマをガイドし、/terms か /help から確認できる。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
 7. [ ] T3-05: “途中で別コマンド”が来たときの状態リセットルールを定義する。完了条件: state管理のルールがコード化され、tests で意図しない混線が起きないことを確認する。
 8. [ ] T3-06: 一定時間無操作で状態を破棄するタイムアウトを実装する。完了条件: 状態保持の期限が設定され、タイムアウト時の再案内が行われる。
 9. [ ] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生など）を実装する。完了条件: core/prompts.py か bot/main.py にテーマ別プロンプトが入り、レスポンスに反映される。
-10. [ ] T4-05: NG/危険領域の制御（医療/法律/自傷他害）を追加する。完了条件: 禁止テーマの検出と安全な応答が実装され、テストで確認できる。
+10. [x] T4-05: NG/危険領域の制御（医療/法律/自傷他害）を追加する。完了条件: 禁止テーマの検出と安全な応答が実装され、テストで確認できる。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; tests/test_safety_topics.py L1-L34)
 
 ## 記号ルール
 - `[ ]` 未着手 / ToDo
 - `[~]` 進行中・要補完
 - `[x]` 完了（根拠を括弧に記載）
 - `(!)` 判断待ち
+
+## Safety notes（禁止/注意テーマ）
+- 以下は占いで断定せず、専門家/公的窓口を案内する: 医療・診断/薬、法律・契約/紛争、投資助言、暴力・他害、自傷/強い不安。
+- /help と /terms から禁止/注意テーマにリンクし、bot/main.py の安全ガード（build_sensitive_topic_notice / respond_with_safety_notice）で自動案内します。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
 
 ## 現状ハイライト（payment flow stabilizing の確認結果）
 - Invoice多重発行の抑止と stale callback 吸収が入っている（dedup TTL＋`_safe_answer_callback/_safe_answer_pre_checkout`）。(bot/main.py L182-L208, L431-L447, L450-L475, L1393-L1449)
@@ -58,7 +62,7 @@
 - [x] T2-04: “引いたカード”表示フォーマット固定（card line + 整形）(bot/main.py L1171-L1186; tests/test_drawn_cards_format.py L28-L74)
 - [ ] T2-05: スプレッドごとの役割語彙テンプレ
 - [~] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）(tests/test_drawn_cards_format.py L28-L74)
-- [ ] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）
+- [x] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
 
 ---
 
@@ -79,7 +83,7 @@
 - [~] T4-02: タロット用プロンプトテンプレ（安定した型）(core/prompts.py)
 - [x] T4-03: “箇条書き数”のガイダンスをLLM出力に反映 (bot/main.py L1003-L1078)
 - [ ] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生…）
-- [ ] T4-05: NG/危険領域の制御（医療/法律/自傷他害）
+- [x] T4-05: NG/危険領域の制御（医療/法律/自傷他害）(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; tests/test_safety_topics.py L1-L34)
 - [ ] T4-06: レスポンス後処理（長文カット/要点先出し/改行整形）
 - [ ] T4-07: 料金最適化（モデル選定、max_tokens、キャッシュ、リトライ）
 - [ ] (!) T4-08: API分離の要否（Bot直呼び vs FastAPI経由）
