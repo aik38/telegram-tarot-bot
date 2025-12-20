@@ -391,6 +391,9 @@ def _parse_invoice_payload(payload: str) -> tuple[str | None, int | None]:
     return (str(sku) if sku is not None else None, user_id)
 
 
+CARD_LINE_PREFIX = "《カード》："
+
+
 def _inject_position_headings(
     lines: list[str], position_labels: Sequence[str] | None
 ) -> list[str]:
@@ -408,7 +411,7 @@ def _inject_position_headings(
 
     try:
         card_line_index = next(
-            idx for idx, line in enumerate(lines) if "引いたカード：" in line
+            idx for idx, line in enumerate(lines) if CARD_LINE_PREFIX in line
         )
     except StopIteration:
         card_line_index = None
@@ -425,6 +428,26 @@ def _inject_position_headings(
 
     new_lines.extend(lines[insert_index:])
     return new_lines
+
+
+def _merge_conclusion_into_bullet_list(lines: list[str]) -> list[str]:
+    bullet_indexes = [idx for idx, line in enumerate(lines) if line.lstrip().startswith("・")]
+    if not bullet_indexes:
+        return lines
+
+    last_bullet_idx = bullet_indexes[-1]
+    trailing = lines[last_bullet_idx + 1 :]
+    while trailing and trailing[0] == "":
+        trailing.pop(0)
+    trailing_text = " ".join([t for t in trailing if t]).strip()
+    if trailing_text:
+        merged = lines[last_bullet_idx].rstrip()
+        if merged and merged[-1] not in ("。", "！", "!", "？", "?", "、", "」"):
+            merged += "。"
+        merged = f"{merged} まとめとして、{trailing_text}"
+        return lines[:last_bullet_idx] + [merged]
+
+    return lines[: last_bullet_idx + 1]
 
 
 def format_tarot_answer(
@@ -447,8 +470,13 @@ def format_tarot_answer(
         cleaned = re.sub(r"^結論：\s*", "", line).strip()
         cleaned = re.sub(r"^[0-9]+[\.．]\s*", "", cleaned)
         cleaned = re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*", "", cleaned)
+        if re.fullmatch(r"[-・\s]*メインメッセージ[:：]?\s*", cleaned):
+            continue
+        cleaned = cleaned.replace("【メインメッセージ】", "")
         cleaned = re.sub(r"^カード：", "引いたカード：", cleaned)
-        if "引いたカード：" in cleaned:
+        cleaned = re.sub(r"^引いたカード[：:]", CARD_LINE_PREFIX, cleaned)
+        cleaned = re.sub(r"^《?カード》?[：:]", CARD_LINE_PREFIX, cleaned)
+        if CARD_LINE_PREFIX in cleaned:
             if card_line:
                 cleaned = card_line
             if card_line_found:
@@ -478,6 +506,7 @@ def format_tarot_answer(
     while compacted and compacted[-1] == "":
         compacted.pop()
 
+    compacted = _merge_conclusion_into_bullet_list(compacted)
     compacted = _inject_position_headings(compacted, position_labels)
     formatted = "\n".join(compacted)
     if len(formatted) > 1400:
@@ -1380,7 +1409,7 @@ def build_tarot_messages(
         f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
         f"{action_count_text}\n"
         "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
-        "- カード名は「引いたカード：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
+        "- カード名は「《カード》：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
         f"- テーマ別フォーカス: {theme_focus}"
     )
 
@@ -1401,7 +1430,7 @@ def build_tarot_messages(
 
 def format_drawn_cards(drawn_cards: list[dict[str, str]]) -> str:
     if not drawn_cards:
-        return "引いたカード：カード情報を取得できませんでした。"
+        return f"{CARD_LINE_PREFIX}カード情報を取得できませんでした。"
 
     card_labels = []
     for item in drawn_cards:
@@ -1410,15 +1439,15 @@ def format_drawn_cards(drawn_cards: list[dict[str, str]]) -> str:
         orientation = card.get("orientation_label_ja")
         card_label = f"{card_name}（{orientation}）" if orientation else card_name
         position_label = item.get("label_ja")
-        if position_label:
+        if position_label and position_label.strip() != "メインメッセージ":
             card_labels.append(f"{card_label} - {position_label}")
         else:
             card_labels.append(card_label)
-    return "引いたカード：" + "、".join(card_labels)
+    return CARD_LINE_PREFIX + "、".join(card_labels)
 
 
 def ensure_tarot_response_prefixed(answer: str, heading: str) -> str:
-    if answer.lstrip().startswith("引いたカード"):
+    if answer.lstrip().startswith(CARD_LINE_PREFIX):
         return answer
     return f"{heading}\n{answer}" if heading else answer
 

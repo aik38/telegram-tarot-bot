@@ -34,7 +34,7 @@ def test_format_drawn_cards_single_spread():
     drawn_cards = _build_drawn_cards(ONE_CARD)
     formatted = format_drawn_cards(drawn_cards)
 
-    assert formatted == "引いたカード：カード1（正位置） - メインメッセージ"
+    assert formatted == "《カード》：カード1（正位置）"
 
 
 def test_format_drawn_cards_keeps_order_and_positions():
@@ -43,7 +43,7 @@ def test_format_drawn_cards_keeps_order_and_positions():
 
     assert (
         formatted
-        == "引いたカード：カード1（正位置） - 現在の状況、カード2（逆位置） - 障害や課題、カード3（正位置） - 未来の可能性"
+        == "《カード》：カード1（正位置） - 現在の状況、カード2（逆位置） - 障害や課題、カード3（正位置） - 未来の可能性"
     )
 
 
@@ -57,7 +57,7 @@ def test_format_tarot_answer_injects_card_line_once():
 
     formatted = format_tarot_answer(answer, card_line=card_line)
 
-    assert formatted.count("引いたカード：") == 1
+    assert formatted.count("《カード》：") == 1
     lines = formatted.splitlines()
     assert lines[0] == "状況は好転しそうです。"
     assert card_line in formatted
@@ -74,6 +74,28 @@ def test_format_tarot_answer_overwrites_mismatched_card_line():
 
     formatted = format_tarot_answer(answer, card_line=card_line)
 
-    assert formatted.count("引いたカード：") == 1
+    assert formatted.count("《カード》：") == 1
     assert card_line in formatted
     assert "バラバラな書き方でした" not in formatted
+
+
+def test_format_tarot_answer_removes_headings_and_merges_conclusion():
+    drawn_cards = _build_drawn_cards(ONE_CARD)
+    card_line = format_drawn_cards(drawn_cards)
+    answer = (
+        "【メインメッセージ】\n"
+        "メインメッセージ\n"
+        "引いたカード：ワンドの5（逆位置）\n"
+        "理由：調和を意識しましょう。\n"
+        "・周囲の声を丁寧に拾う。\n"
+        "・焦らず段取りを整える。\n"
+        "\n"
+        "来年の仕事運は落ち着きを取り戻すでしょう。"
+    )
+
+    formatted = format_tarot_answer(answer, card_line=card_line)
+
+    assert formatted.count("《カード》：") == 1
+    assert "メインメッセージ" not in formatted
+    assert formatted.splitlines()[-1].startswith("・")
+    assert "まとめとして、来年の仕事運は落ち着きを取り戻すでしょう。" in formatted

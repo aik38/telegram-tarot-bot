@@ -101,7 +101,7 @@ def test_general_chat_response_triggers_rewrite(monkeypatch):
 
 def test_tarot_response_prefixed(monkeypatch):
     bot_main = import_bot_main(monkeypatch)
-    heading = "引いたカードは「恋人（正位置）」です。"
+    heading = "《カード》：恋人（正位置）"
     response = bot_main.ensure_tarot_response_prefixed("解釈が続きます。", heading)
     assert response.startswith(heading)
 
