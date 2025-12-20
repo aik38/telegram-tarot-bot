@@ -33,6 +33,7 @@ from bot.utils.postprocess import postprocess_llm_text
 from bot.utils.replies import ensure_quick_menu
 from bot.utils.tarot_output import finalize_tarot_answer, format_time_axis_tarot_answer
 from bot.utils.validators import validate_question_text
+from bot.texts.i18n import normalize_lang
 from openai import (
     APIConnectionError,
     APIError,
@@ -63,6 +64,7 @@ from core.db import (
     get_payment_by_charge_id,
     get_recent_feedback,
     get_user,
+    get_user_lang,
     grant_purchase,
     has_accepted_terms,
     increment_general_chat_count,
@@ -73,6 +75,7 @@ from core.db import (
     log_payment,
     log_payment_event,
     mark_payment_refunded,
+    set_user_lang,
     set_terms_accepted,
     set_last_general_chat_block_notice,
     revoke_purchase,
@@ -299,6 +302,7 @@ SENSITIVE_TOPIC_GUIDANCE: dict[str, str] = {
     "self_harm": "命の危険を感じるときは、迷わず救急や自治体・専門の相談窓口へ連絡してください。ひとりで抱え込まないでください。",
     "violence": "危険が迫っている場合は安全な場所へ移動し、警察など公的機関へ相談してください。",
 }
+SUPPORTED_LANGS = {"ja", "en", "pt"}
 
 
 def format_theme_examples_for_help() -> str:
@@ -1027,6 +1031,53 @@ def _preview_text(text: str, limit: int = 80) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def build_lang_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="日本語", callback_data="lang:set:ja")],
+            [InlineKeyboardButton(text="English", callback_data="lang:set:en")],
+            [InlineKeyboardButton(text="Português", callback_data="lang:set:pt")],
+        ]
+    )
+
+
+def _extract_start_payload(message: Message) -> str | None:
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if not payload:
+        return None
+    token = payload.split()[0]
+    candidate = token.strip().lower().replace("_", "-")
+    if candidate in SUPPORTED_LANGS:
+        return candidate
+    return None
+
+
+def resolve_user_lang(message: Message) -> str:
+    user_id = message.from_user.id if message.from_user else None
+    payload_lang = _extract_start_payload(message)
+    if payload_lang:
+        if user_id is not None:
+            set_user_lang(user_id, payload_lang)
+        return payload_lang
+
+    saved_lang = get_user_lang(user_id) if user_id is not None else None
+    if saved_lang:
+        return saved_lang
+
+    telegram_lang = None
+    if message.from_user and getattr(message.from_user, "language_code", None):
+        telegram_lang = normalize_lang(message.from_user.language_code)
+
+    lang = telegram_lang or "ja"
+    if user_id is not None:
+        set_user_lang(user_id, lang)
+    return lang
 
 
 def get_chat_id(message: Message) -> int | None:
@@ -1954,7 +2005,20 @@ async def cmd_start(message: Message) -> None:
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
     mark_user_active(user_id)
+    resolve_user_lang(message)
     await message.answer(get_start_text(), reply_markup=base_menu_kb())
+
+
+@dp.message(Command("lang"))
+async def cmd_lang(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        await message.answer("ユーザー情報を確認できませんでした。")
+        return
+    await message.answer(
+        "言語を選択してください（表示は日本語のままです）。",
+        reply_markup=build_lang_keyboard(),
+    )
 
 
 @dp.callback_query(F.data == "nav:menu")
@@ -1969,6 +2033,27 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
         await query.message.answer(
             "メニューに戻りました。下のボタンから選んでください。", reply_markup=base_menu_kb()
         )
+
+
+@dp.callback_query(F.data.startswith("lang:set:"))
+async def handle_lang_set(query: CallbackQuery) -> None:
+    await _safe_answer_callback(query, cache_time=1)
+    data = query.data or ""
+    lang_code = data.split(":", maxsplit=2)[-1] if ":" in data else None
+    normalized = normalize_lang(lang_code) if lang_code else None
+    user_id = query.from_user.id if query.from_user else None
+
+    if normalized not in SUPPORTED_LANGS or user_id is None:
+        if query.message:
+            await query.message.answer("言語を設定できませんでした。")
+        return
+
+    set_user_lang(user_id, normalized)
+    confirmation = f"言語設定を保存しました（{normalized}）。"
+    if query.message:
+        await query.message.answer(confirmation, reply_markup=base_menu_kb())
+    else:
+        await bot.send_message(user_id, confirmation, reply_markup=base_menu_kb())
 
 
 @dp.callback_query(F.data == "nav:status")

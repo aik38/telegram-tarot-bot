@@ -4,6 +4,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
+from aiogram.types import InlineKeyboardMarkup
 import pytest
 
 from core.tarot import contains_tarot_like, is_tarot_request
@@ -186,6 +187,47 @@ def test_multiple_card_hint_without_command(monkeypatch, tmp_path):
     asyncio.run(bot_main.handle_message(message))
 
     assert any("複数枚はコマンド指定" in ans for ans in message.answers)
+
+
+def test_start_payload_sets_lang(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    message = DummyMessage("/start en", user_id=100)
+
+    asyncio.run(bot_main.cmd_start(message))
+
+    from core import db as core_db
+
+    assert core_db.get_user_lang(100) == "en"
+
+
+def test_start_prefers_saved_lang(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    from core import db as core_db
+
+    core_db.set_user_lang(200, "pt")
+    message = DummyMessage("/start unknown", user_id=200)
+
+    asyncio.run(bot_main.cmd_start(message))
+
+    assert core_db.get_user_lang(200) == "pt"
+
+
+def test_lang_command_and_callback(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    message = DummyMessage("/lang", user_id=300)
+
+    asyncio.run(bot_main.cmd_lang(message))
+
+    assert message.reply_markups
+    assert isinstance(message.reply_markups[0], InlineKeyboardMarkup)
+
+    callback = DummyCallback("lang:set:pt", user_id=300, message=message)
+    asyncio.run(bot_main.handle_lang_set(callback))
+
+    from core import db as core_db
+
+    assert core_db.get_user_lang(300) == "pt"
+    assert any("言語設定を保存しました" in ans for ans in message.answers)
 
 
 def test_paywall_blocks_paid_spread(monkeypatch, tmp_path):
