@@ -58,14 +58,18 @@ from core.db import (
     check_db_health,
     consume_ticket,
     ensure_user,
+    get_daily_stats,
     get_latest_payment,
     get_payment_by_charge_id,
+    get_recent_feedback,
     get_user,
     grant_purchase,
     has_accepted_terms,
     increment_general_chat_count,
     increment_one_oracle_count,
     log_audit,
+    log_app_event,
+    log_feedback,
     log_payment,
     log_payment_event,
     mark_payment_refunded,
@@ -865,7 +869,30 @@ def _safe_log_audit(
                 "action": action,
                 "actor_user_id": actor_user_id,
                 "target_user_id": target_user_id,
-                "status": status,
+            "status": status,
+        },
+    )
+
+
+def _safe_log_app_event(
+    *, event_type: str, user_id: int | None, payload: str | None = None
+) -> None:
+    request_id = request_id_var.get("-")
+    try:
+        log_app_event(
+            event_type=event_type,
+            user_id=user_id,
+            request_id=request_id,
+            payload=payload,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to log app event",
+            extra={
+                "event_type": event_type,
+                "user_id": user_id,
+                "payload": payload,
+                "request_id": request_id,
             },
         )
 
@@ -1837,6 +1864,50 @@ async def cmd_status(message: Message) -> None:
     await prompt_status(message, now=now)
 
 
+@dp.message(Command("feedback"))
+async def cmd_feedback(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        await message.answer("個別チャットからフィードバックをお送りください。")
+        return
+    reset_state_for_explicit_command(user_id)
+    mark_user_active(user_id)
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "ご意見をお聞かせください。使い方: /feedback ボットへのご意見や不具合を入力してください。",
+            reply_markup=base_menu_kb(),
+        )
+        return
+
+    feedback_text = parts[1].strip()
+    mode = get_user_mode(user_id)
+    try:
+        log_feedback(
+            user_id=user_id,
+            mode=mode,
+            text=feedback_text,
+            request_id=request_id_var.get("-"),
+        )
+        _safe_log_app_event(
+            event_type="feedback",
+            user_id=user_id,
+            payload=json.dumps({"mode": mode}),
+        )
+    except Exception:
+        logger.exception("Failed to record feedback", extra={"user_id": user_id})
+        await message.answer(
+            "フィードバックの保存中に問題が起きました。お手数ですが後ほどお試しください。",
+            reply_markup=base_menu_kb(),
+        )
+        return
+
+    await message.answer(
+        "フィードバックありがとうございます。運用改善に活かします。", reply_markup=base_menu_kb()
+    )
+
+
 @dp.message(Command("read1"))
 async def cmd_read1(message: Message) -> None:
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
@@ -2202,14 +2273,54 @@ async def cmd_admin(message: Message) -> None:
             "管理者メニューです。サポート中のサブコマンド:\n"
             "・/admin grant <user_id> <SKU> : 指定ユーザーに付与します。\n"
             "・/admin revoke <user_id> <SKU> : 指定ユーザーの権限を剥奪します。\n"
+            "・/admin feedback_recent [N] : 直近のフィードバックを確認します。\n"
+            "・/admin stats [days] : 日次の占い/相談/決済/エラー件数を確認します。\n"
             f"SKU候補: {valid_skus}"
         )
         return
 
     subcommand = parts[1].lower()
+    if subcommand == "feedback_recent":
+        limit = 10
+        if len(parts) >= 3:
+            try:
+                limit = max(1, min(50, int(parts[2])))
+            except ValueError:
+                await message.answer("件数は数字で指定してください。例: /admin feedback_recent 20")
+                return
+        records = get_recent_feedback(limit)
+        if not records:
+            await message.answer("まだフィードバックが登録されていません。")
+            return
+        lines = []
+        for record in records:
+            created_local = record.created_at.astimezone(USAGE_TIMEZONE).strftime("%Y-%m-%d %H:%M")
+            preview = record.text if len(record.text) <= 120 else record.text[:117] + "..."
+            lines.append(
+                f"{created_local} | uid={record.user_id} | mode={record.mode} | rid={record.request_id or '-'}\n{preview}"
+            )
+        await message.answer("直近のフィードバックです：\n" + "\n\n".join(lines))
+        return
+
+    if subcommand == "stats":
+        days = 7
+        if len(parts) >= 3:
+            try:
+                days = max(1, min(14, int(parts[2])))
+            except ValueError:
+                await message.answer("日数は数字で指定してください。例: /admin stats 7")
+                return
+        stats_rows = get_daily_stats(days=days)
+        lines = [
+            f"{row['date']}: tarot={row['tarot']} consult={row['consult']} payments={row['payments']} errors={row['errors']}"
+            for row in stats_rows
+        ]
+        await message.answer("日次の簡易集計です。\n" + "\n".join(lines))
+        return
+
     if subcommand not in {"grant", "revoke"}:
         await message.answer(
-            "現在サポートしているのは grant / revoke です。/admin grant または /admin revoke をご利用ください。"
+            "現在サポートしているのは grant / revoke / feedback_recent / stats です。"
         )
         return
 
@@ -2375,6 +2486,8 @@ async def handle_tarot_reading(
     chat_id = get_chat_id(message)
     can_use_bot = hasattr(message, "chat") and getattr(message.chat, "id", None) is not None
     release_inflight = await _acquire_inflight(user_id, message)
+    event_success = False
+    event_error: str | None = None
 
     spread_to_use = spread or choose_spread(user_query)
     effective_theme = theme or get_tarot_theme(user_id)
@@ -2439,6 +2552,7 @@ async def handle_tarot_reading(
                 )
             else:
                 await message.answer(error_text)
+            event_error = "fatal_tarot"
             return
 
         if spread_to_use.id == THREE_CARD_TIME_AXIS.id:
@@ -2488,6 +2602,7 @@ async def handle_tarot_reading(
             )
         else:
             await message.answer(formatted_answer, reply_markup=upgrade_markup)
+        event_success = True
     except Exception:
         logger.exception("Unexpected error during tarot reading")
         fallback = (
@@ -2503,6 +2618,7 @@ async def handle_tarot_reading(
             )
         else:
             await message.answer(fallback)
+        event_error = "tarot_exception"
     finally:
         total_ms = (perf_counter() - total_start) * 1000
         logger.info(
@@ -2516,6 +2632,23 @@ async def handle_tarot_reading(
                 "total_handler_ms": round(total_ms, 2),
             },
         )
+        _safe_log_app_event(
+            event_type="tarot",
+            user_id=user_id,
+            payload=json.dumps(
+                {
+                    "spread": spread_to_use.id,
+                    "theme": effective_theme,
+                    "success": event_success,
+                }
+            ),
+        )
+        if event_error:
+            _safe_log_app_event(
+                event_type="error",
+                user_id=user_id,
+                payload=event_error,
+            )
         release_inflight()
 
 
@@ -2571,6 +2704,8 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     can_use_bot = chat_id_value is not None
     user: UserRecord | None = ensure_user(user_id, now=now) if user_id is not None else None
     paywall_triggered = False
+    event_success = False
+    event_error: str | None = None
 
     if await respond_with_safety_notice(message, user_query):
         logger.info(
@@ -2646,6 +2781,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 )
             else:
                 await message.answer(error_text)
+            event_error = "fatal_consult"
             return
         safe_answer = await ensure_general_chat_safety(answer)
         safe_answer = format_long_answer(safe_answer, "consult")
@@ -2658,6 +2794,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer)
+        event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
         fallback = (
@@ -2665,6 +2802,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             "少し時間をおいてから、もう一度メッセージを送ってもらえると助かります。"
         )
         await message.answer(fallback)
+        event_error = "consult_exception"
     finally:
         total_ms = (perf_counter() - total_start) * 1000
         logger.info(
@@ -2677,6 +2815,17 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 "total_handler_ms": round(total_ms, 2),
             },
         )
+        _safe_log_app_event(
+            event_type="consult",
+            user_id=user_id,
+            payload=json.dumps({"success": event_success, "intent": "consult" if consult_intent else "general"}),
+        )
+        if event_error:
+            _safe_log_app_event(
+                event_type="error",
+                user_id=user_id,
+                payload=event_error,
+            )
         release_inflight()
 
 
@@ -2694,6 +2843,8 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             "refund",
             "start",
             "help",
+            "feedback",
+            "admin",
         ]
     )
 )

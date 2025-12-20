@@ -72,6 +72,26 @@ class AuditRecord:
     created_at: datetime
 
 
+@dataclass
+class FeedbackRecord:
+    id: int
+    user_id: int
+    mode: str
+    text: str
+    request_id: str | None
+    created_at: datetime
+
+
+@dataclass
+class AppEventRecord:
+    id: int
+    event_type: str
+    user_id: int | None
+    request_id: str | None
+    payload: str | None
+    created_at: datetime
+
+
 TicketColumn = Literal["tickets_3", "tickets_7", "tickets_10"]
 
 
@@ -141,6 +161,42 @@ def init_db() -> None:
                 payload TEXT,
                 created_at TEXT
             )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INT,
+                mode TEXT,
+                text TEXT,
+                request_id TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT,
+                user_id INT,
+                request_id TEXT,
+                payload TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_app_events_created
+            ON app_events(created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_feedback_created
+            ON feedback(created_at)
             """
         )
 
@@ -483,6 +539,20 @@ def check_db_health() -> tuple[bool, list[str]]:
                     "status",
                     "created_at",
                 },
+                "feedback": {
+                    "user_id",
+                    "mode",
+                    "text",
+                    "request_id",
+                    "created_at",
+                },
+                "app_events": {
+                    "event_type",
+                    "user_id",
+                    "request_id",
+                    "payload",
+                    "created_at",
+                },
             }
 
             for table, required_columns in requirements.items():
@@ -580,6 +650,28 @@ def _row_to_audit(row: sqlite3.Row) -> AuditRecord:
         target_user_id=row["target_user_id"],
         payload=row["payload"],
         status=row["status"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_feedback(row: sqlite3.Row) -> FeedbackRecord:
+    return FeedbackRecord(
+        id=row["id"],
+        user_id=row["user_id"],
+        mode=row["mode"],
+        text=row["text"],
+        request_id=row["request_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_app_event(row: sqlite3.Row) -> AppEventRecord:
+    return AppEventRecord(
+        id=row["id"],
+        event_type=row["event_type"],
+        user_id=row["user_id"],
+        request_id=row["request_id"],
+        payload=row["payload"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
 
@@ -785,6 +877,121 @@ def _refresh_daily_counts(
     return refreshed if refreshed else row
 
 
+def log_feedback(
+    *,
+    user_id: int,
+    mode: str,
+    text: str,
+    request_id: str | None,
+    now: datetime | None = None,
+) -> FeedbackRecord:
+    now = now or datetime.now(timezone.utc)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO feedback (user_id, mode, text, request_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, mode, text, request_id, now.isoformat()),
+        )
+        row = conn.execute(
+            "SELECT * FROM feedback ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise ValueError("Failed to insert feedback")
+    return _row_to_feedback(row)
+
+
+def get_recent_feedback(limit: int = 10) -> list[FeedbackRecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM feedback ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_row_to_feedback(row) for row in rows]
+
+
+def log_app_event(
+    *,
+    event_type: str,
+    user_id: int | None,
+    request_id: str | None,
+    payload: str | None = None,
+    now: datetime | None = None,
+) -> AppEventRecord:
+    now = now or datetime.now(timezone.utc)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_events (event_type, user_id, request_id, payload, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_type, user_id, request_id, payload, now.isoformat()),
+        )
+        row = conn.execute(
+            "SELECT * FROM app_events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise ValueError("Failed to insert app event")
+    return _row_to_app_event(row)
+
+
+def get_daily_stats(*, days: int = 7, now: datetime | None = None) -> list[dict[str, object]]:
+    now = now or datetime.now(timezone.utc)
+    start_date = _usage_date(now) - timedelta(days=days - 1)
+    date_keys = [
+        (start_date + timedelta(days=offset)).isoformat()
+        for offset in range(days)
+    ]
+    stats: dict[str, dict[str, object]] = {
+        date_key: {
+            "date": date_key,
+            "tarot": 0,
+            "consult": 0,
+            "errors": 0,
+            "payments": 0,
+        }
+        for date_key in date_keys
+    }
+    with _connect() as conn:
+        event_rows = conn.execute(
+            """
+            SELECT substr(created_at, 1, 10) AS day, event_type, COUNT(*) AS count
+            FROM app_events
+            WHERE date(created_at) >= date(?)
+            GROUP BY day, event_type
+            """,
+            (start_date.isoformat(),),
+        ).fetchall()
+        payment_rows = conn.execute(
+            """
+            SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count
+            FROM payments
+            WHERE date(created_at) >= date(?)
+            GROUP BY day
+            """,
+            (start_date.isoformat(),),
+        ).fetchall()
+
+    for row in event_rows:
+        day = row["day"]
+        if day not in stats:
+            continue
+        if row["event_type"] == "tarot":
+            stats[day]["tarot"] = row["count"]
+        elif row["event_type"] == "consult":
+            stats[day]["consult"] = row["count"]
+        elif row["event_type"] == "error":
+            stats[day]["errors"] = row["count"]
+
+    for row in payment_rows:
+        day = row["day"]
+        if day in stats:
+            stats[day]["payments"] = row["count"]
+
+    return sorted(stats.values(), key=lambda item: item["date"], reverse=True)
+
+
 def _backfill_user_columns(conn: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc)
     today = _usage_date(now).isoformat()
@@ -810,11 +1017,15 @@ __all__ = [
     "PaymentEvent",
     "PaymentRecord",
     "UserRecord",
+    "AppEventRecord",
+    "FeedbackRecord",
     "TicketColumn",
+    "get_daily_stats",
     "check_db_health",
     "consume_ticket",
     "ensure_user",
     "get_user",
+    "get_recent_feedback",
     "get_latest_audit",
     "get_latest_payment",
     "get_payment_by_charge_id",
@@ -825,6 +1036,8 @@ __all__ = [
     "increment_one_oracle_count",
     "init_db",
     "log_payment",
+    "log_app_event",
+    "log_feedback",
     "log_payment_event",
     "log_audit",
     "mark_payment_refunded",
