@@ -30,11 +30,19 @@ Write-Host "== pytest ==" -ForegroundColor Cyan
 # ローカル変更があればコミット＆プッシュ（安全運転）
 $changes = git status --porcelain
 if ($changes) {
-  Write-Host "== Local changes detected. Commit & push ==" -ForegroundColor Yellow
-  git add -A
-  $msg = "Update from local ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))"
-  git commit -m $msg
-  git push origin main
+  # Windows junk のみなら commit/push しない
+  $filtered = $changes | Where-Object { $_ -notmatch '(Thumbs\.db|Desktop\.ini)$' }
+
+  if ($filtered) {
+    Write-Host "== Local changes detected. Commit & push ==" -ForegroundColor Yellow
+    git add -A
+    $msg = "Update from local ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))"
+    git commit -m $msg
+    git push origin main
+  }
+  else {
+    Write-Host "== Only Windows junk detected. Skip commit/push ==" -ForegroundColor Yellow
+  }
 } else {
   Write-Host "== No local changes. Skip commit/push ==" -ForegroundColor Green
 }

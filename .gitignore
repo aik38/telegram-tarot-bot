@@ -37,4 +37,11 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+thumbs.db
+Desktop.ini
+desktop.ini
+**/Thumbs.db
+**/thumbs.db
+**/Desktop.ini
+**/desktop.ini
 run_bot.bat
