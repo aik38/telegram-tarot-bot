@@ -713,6 +713,35 @@ async def send_long_text(
         )
 
 
+async def _safe_delete_message(message: Message | None) -> None:
+    if not message:
+        return
+
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    message_id = getattr(message, "message_id", None)
+
+    if chat_id is None or message_id is None:
+        return
+
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except TelegramBadRequest as exc:
+        logger.info(
+            "Failed to delete status message",
+            extra={
+                "mode": "cleanup",
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reason": str(exc),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error while deleting status message",
+            extra={"mode": "cleanup", "chat_id": chat_id, "message_id": message_id},
+        )
+
+
 async def _acquire_inflight(
     user_id: int | None,
     message: Message | None = None,
@@ -2540,10 +2569,10 @@ async def handle_tarot_reading(
                     chat_id,
                     error_text,
                     reply_to=getattr(message, "message_id", None),
-                    edit_target=status_message,
+                    reply_markup_first=ensure_quick_menu(),
                 )
             else:
-                await message.answer(error_text)
+                await message.answer(error_text, reply_markup=ensure_quick_menu())
             event_error = "fatal_tarot"
             return
 
@@ -2589,11 +2618,13 @@ async def handle_tarot_reading(
                 chat_id,
                 formatted_answer,
                 reply_to=getattr(message, "message_id", None),
-                edit_target=status_message,
+                reply_markup_first=ensure_quick_menu(),
                 reply_markup_last=upgrade_markup,
             )
         else:
-            await message.answer(formatted_answer, reply_markup=upgrade_markup)
+            await message.answer(
+                formatted_answer, reply_markup=upgrade_markup or ensure_quick_menu()
+            )
         event_success = True
     except Exception:
         logger.exception("Unexpected error during tarot reading")
@@ -2601,17 +2632,18 @@ async def handle_tarot_reading(
             "占いの準備で少しつまずいてしまいました。\n"
             "時間をおいて、もう一度話しかけてもらえるとうれしいです。"
         )
-        if status_message and can_use_bot and chat_id is not None:
+        if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
                 fallback,
                 reply_to=getattr(message, "message_id", None),
-                edit_target=status_message,
+                reply_markup_first=ensure_quick_menu(),
             )
         else:
-            await message.answer(fallback)
+            await message.answer(fallback, reply_markup=ensure_quick_menu())
         event_error = "tarot_exception"
     finally:
+        await _safe_delete_message(status_message)
         total_ms = (perf_counter() - total_start) * 1000
         logger.info(
             "Tarot handler finished",
