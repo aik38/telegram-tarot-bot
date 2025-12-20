@@ -286,6 +286,8 @@ def format_tarot_answer(text: str, card_line: str | None = None) -> str:
         cleaned = re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*", "", cleaned)
         cleaned = re.sub(r"^カード：", "引いたカード：", cleaned)
         if "引いたカード：" in cleaned:
+            if card_line:
+                cleaned = card_line
             if card_line_found:
                 continue
             card_line_found = True
@@ -1168,30 +1170,16 @@ def build_tarot_messages(
     ]
 
 
-def format_drawn_card_heading(drawn_cards: list[dict[str, str]]) -> str:
-    if not drawn_cards:
-        return "引いたカードをお知らせできませんでした。"
-
-    if len(drawn_cards) == 1:
-        card = drawn_cards[0]["card"]
-        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
-        return f"引いたカードは「{card_label}」です。"
-
-    lines = ["引いたカード："]
-    for index, item in enumerate(drawn_cards, start=1):
-        card = item["card"]
-        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
-        lines.append(f"{index}. {card_label} - {item['label_ja']}")
-    return "\n".join(lines)
-
-
-def format_drawn_card_line(drawn_cards: list[dict[str, str]]) -> str:
+def format_drawn_cards(drawn_cards: list[dict[str, str]]) -> str:
     if not drawn_cards:
         return "引いたカード：カード情報を取得できませんでした。"
+
     card_labels = []
     for item in drawn_cards:
-        card = item["card"]
-        card_label = f"{card['name_ja']}（{card['orientation_label_ja']}）"
+        card = item.get("card", {})
+        card_name = card.get("name_ja") or "不明なカード"
+        orientation = card.get("orientation_label_ja")
+        card_label = f"{card_name}（{orientation}）" if orientation else card_name
         position_label = item.get("label_ja")
         if position_label:
             card_labels.append(f"{card_label} - {position_label}")
@@ -1951,7 +1939,7 @@ async def handle_tarot_reading(
         formatted_answer = format_long_answer(
             answer,
             "tarot",
-            card_line=format_drawn_card_line(drawn_payload),
+            card_line=format_drawn_cards(drawn_payload),
         )
         if guidance_note:
             formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
