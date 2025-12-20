@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
+from bot.texts.i18n import normalize_lang
 from core.store.catalog import get_product
 
 DB_PATH = os.getenv("SQLITE_DB_PATH", "db/telegram_tarot.db")
@@ -35,6 +36,7 @@ class UserRecord:
     one_oracle_count_today: int
     usage_date: date | None
     last_general_chat_block_notice_at: datetime | None
+    lang: str | None
 
 
 @dataclass
@@ -113,6 +115,11 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in rows)
 
 
+def _normalize_lang(code: str | None) -> str:
+    # Prefer shared normalizer to keep behavior aligned with UI helpers
+    return normalize_lang(code)
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -131,7 +138,8 @@ def init_db() -> None:
                 tickets_10 INT,
                 images_enabled INT,
                 terms_accepted_at TEXT,
-                last_general_chat_block_notice_at TEXT
+                last_general_chat_block_notice_at TEXT,
+                lang TEXT
             )
             """
         )
@@ -220,6 +228,8 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN last_general_chat_block_notice_at TEXT"
             )
+        if not _column_exists(conn, "users", "lang"):
+            conn.execute("ALTER TABLE users ADD COLUMN lang TEXT")
 
         if not _column_exists(conn, "payments", "status"):
             conn.execute("ALTER TABLE payments ADD COLUMN status TEXT")
@@ -294,8 +304,9 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
                 images_enabled,
                 terms_accepted_at,
                 last_general_chat_block_notice_at
+            , lang
             )
-            VALUES (?, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, 0, 0, NULL, NULL)
+            VALUES (?, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL)
             """,
             (user_id, now.isoformat(), now.isoformat(), usage_today.isoformat()),
         )
@@ -314,6 +325,7 @@ def ensure_user(user_id: int, *, now: datetime | None = None) -> UserRecord:
             one_oracle_count_today=0,
             usage_date=usage_today,
             last_general_chat_block_notice_at=None,
+            lang=None,
         )
 
 
@@ -326,6 +338,29 @@ def get_user(user_id: int, *, now: datetime | None = None) -> UserRecord | None:
     if not row:
         return None
     return _row_to_user(row)
+
+
+def get_user_lang(user_id: int) -> str | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT lang FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    if not row:
+        return None
+    lang_raw = row["lang"]
+    return _normalize_lang(lang_raw) if lang_raw else None
+
+
+def set_user_lang(user_id: int, lang: str, *, now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    normalized = _normalize_lang(lang)
+    ensure_user(user_id, now=now)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET lang = ? WHERE user_id = ?",
+            (normalized, user_id),
+        )
+    return normalized
 
 
 def log_payment(
@@ -512,6 +547,7 @@ def check_db_health() -> tuple[bool, list[str]]:
                     "images_enabled",
                     "terms_accepted_at",
                     "last_general_chat_block_notice_at",
+                    "lang",
                 },
                 "payments": {
                     "user_id",
@@ -594,6 +630,7 @@ def _row_to_user(row: sqlite3.Row) -> UserRecord:
     usage_date = date.fromisoformat(usage_date_raw) if usage_date_raw else None
     last_notice_raw = row["last_general_chat_block_notice_at"]
     last_notice_dt = datetime.fromisoformat(last_notice_raw) if last_notice_raw else None
+    lang_raw = row["lang"]
     return UserRecord(
         user_id=row["user_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
@@ -609,6 +646,7 @@ def _row_to_user(row: sqlite3.Row) -> UserRecord:
         one_oracle_count_today=row["one_oracle_count_today"],
         usage_date=usage_date,
         last_general_chat_block_notice_at=last_notice_dt,
+        lang=_normalize_lang(lang_raw) if lang_raw else None,
     )
 
 
@@ -1003,7 +1041,13 @@ def _backfill_user_columns(conn: sqlite3.Connection) -> None:
             general_chat_count_today = COALESCE(general_chat_count_today, 0),
             one_oracle_count_today = COALESCE(one_oracle_count_today, 0),
             pass_until = COALESCE(pass_until, premium_until),
-            last_general_chat_block_notice_at = COALESCE(last_general_chat_block_notice_at, NULL)
+            last_general_chat_block_notice_at = COALESCE(last_general_chat_block_notice_at, NULL),
+            lang = CASE
+                WHEN lang IS NULL THEN NULL
+                WHEN lower(replace(lang, '_', '-')) LIKE 'pt%' THEN 'pt'
+                WHEN lower(replace(lang, '_', '-')) LIKE 'en%' THEN 'en'
+                ELSE 'ja'
+            END
         """,
         (today,),
     )
@@ -1025,6 +1069,7 @@ __all__ = [
     "consume_ticket",
     "ensure_user",
     "get_user",
+    "get_user_lang",
     "get_recent_feedback",
     "get_latest_audit",
     "get_latest_payment",
@@ -1042,6 +1087,7 @@ __all__ = [
     "log_audit",
     "mark_payment_refunded",
     "revoke_purchase",
+    "set_user_lang",
     "set_last_general_chat_block_notice",
     "set_terms_accepted",
 ]
