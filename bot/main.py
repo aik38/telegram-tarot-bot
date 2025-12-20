@@ -27,8 +27,9 @@ from aiogram.types import (
     PreCheckoutQuery,
     ContentType,
 )
-from bot.keyboards.common import base_menu_kb, nav_kb, menu_only_kb
+from bot.keyboards.common import base_menu_kb
 from bot.middlewares.throttle import ThrottleMiddleware
+from bot.utils.replies import ensure_quick_menu
 from bot.utils.validators import validate_question_text
 from openai import (
     APIConnectionError,
@@ -332,7 +333,12 @@ async def respond_with_safety_notice(message: Message, user_query: str) -> bool:
     if not topics:
         return False
 
-    await message.answer(build_sensitive_topic_notice(topics), reply_markup=nav_kb())
+    user_id = message.from_user.id if message.from_user else None
+    reset_conversation_state(user_id)
+    mark_user_active(user_id)
+    await message.answer(
+        build_sensitive_topic_notice(topics), reply_markup=ensure_quick_menu()
+    )
     return True
 
 
@@ -1556,7 +1562,7 @@ async def send_store_menu(message: Message) -> None:
 async def cmd_help(message: Message) -> None:
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
     mark_user_active(message.from_user.id if message.from_user else None)
-    await message.answer(build_help_text(), reply_markup=menu_only_kb())
+    await message.answer(build_help_text(), reply_markup=ensure_quick_menu())
 
 
 @dp.message(Command("terms"))
@@ -1570,11 +1576,14 @@ async def cmd_terms(message: Message) -> None:
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1 and parts[1].strip().lower() == "agree" and user_id is not None:
         set_terms_accepted(user_id)
-        await message.answer("利用規約への同意を記録しました。/buy からご購入いただけます。")
+        await message.answer(
+            "利用規約への同意を記録しました。/buy からご購入いただけます。",
+            reply_markup=ensure_quick_menu(),
+        )
         return
 
     await message.answer(get_terms_text(), reply_markup=build_terms_keyboard())
-    await message.answer("同意後は /buy から購入に進めます。", reply_markup=menu_only_kb())
+    await message.answer("同意後は /buy から購入に進めます。", reply_markup=ensure_quick_menu())
 
 
 @dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
@@ -1598,7 +1607,8 @@ async def handle_terms_agree(query: CallbackQuery):
     await _safe_answer_callback(query, "同意を記録しました。", show_alert=True)
     if query.message:
         await query.message.answer(
-            "利用規約への同意を記録しました。/buy から購入手続きに進めます。"
+            "利用規約への同意を記録しました。/buy から購入手続きに進めます。",
+            reply_markup=ensure_quick_menu(),
         )
 
 
@@ -1624,7 +1634,7 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
 async def cmd_support(message: Message) -> None:
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
     mark_user_active(message.from_user.id if message.from_user else None)
-    await message.answer(get_support_text(), reply_markup=menu_only_kb())
+    await message.answer(get_support_text(), reply_markup=ensure_quick_menu())
 
 
 @dp.message(Command("paysupport"))
@@ -2161,7 +2171,10 @@ async def handle_tarot_reading(
 
     status_message: Message | None = None
     try:
-        status_message = await message.answer("🔮鑑定中です…（しばらくお待ちください）")
+        status_message = await message.answer(
+            "🔮鑑定中です…（しばらくお待ちください）",
+            reply_markup=ensure_quick_menu(),
+        )
         openai_start = perf_counter()
         answer, fatal = await call_openai_with_retry(messages)
         openai_latency_ms = (perf_counter() - openai_start) * 1000
@@ -2504,7 +2517,7 @@ async def handle_message(message: Message) -> None:
     if tarot_flow == "awaiting_question":
         ok, error_message = validate_question_text(text, is_text=is_text)
         if not ok and error_message:
-            await message.answer(error_message, reply_markup=nav_kb())
+            await message.answer(error_message, reply_markup=ensure_quick_menu())
             return
         set_tarot_flow(user_id, None)
         await execute_tarot_request(
@@ -2518,7 +2531,7 @@ async def handle_message(message: Message) -> None:
     if user_mode == "tarot" or is_tarot_request(text):
         ok, error_message = validate_question_text(text, is_text=is_text)
         if not ok and error_message:
-            await message.answer(error_message, reply_markup=nav_kb())
+            await message.answer(error_message, reply_markup=ensure_quick_menu())
             return
         set_user_mode(user_id, "tarot")
         await execute_tarot_request(
@@ -2531,7 +2544,7 @@ async def handle_message(message: Message) -> None:
 
     ok, error_message = validate_question_text(text, is_text=is_text)
     if not ok and error_message:
-        await message.answer(error_message, reply_markup=nav_kb())
+        await message.answer(error_message, reply_markup=ensure_quick_menu())
         return
 
     await handle_general_chat(message, user_query=text)
