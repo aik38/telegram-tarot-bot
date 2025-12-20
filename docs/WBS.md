@@ -3,19 +3,21 @@
 このドキュメントを **唯一のWBS** とし、進捗スナップショットは `docs/WBS_PROGRESS.md` に記録します（最終更新: 2025-12-21 UTC）。見た目よりも「落ちない」「迷子にならない」を最優先で維持します。
 
 ## ⏩ 現在地（Today）
-- UXテキスト確定（/start /help /buy /feedback /terms）。
-- Telegram表示の装飾（`**` など）除去・空白整形を完了。
-- 購入導線を `/buy -> Stars` に一本化。
-- Launch 48h checklist / ショートラン（30〜60分）を整備。
+- Telegram表示の装飾（`**` など）除去・空白整形を完了（文章/絵文字は維持）。
+- 購入導線は `/buy -> Stars` に一本化済み。
+- 「🔮鑑定中です…」メッセージは回答生成後に確実に削除されるよう修正済み。
+- Launch 48h checklist / ショートラン（30〜60分）は `docs/launch_checklist.md` で運用。
 
 ## 🎯 今やる（MVP必須）
 - STEP3: `docs/launch_checklist.md` の 48h checklist を実行する（所要目安: 約90分、成果物: ログ/スクショ/結果メモを残す）。
+  - 実施済みの項目はこのブロックで [x] にし、成果物はスクショ→`screenshots/`、ログ→`logs/`、補足メモ→`docs/WBS_PROGRESS.md` に残す。
 
 ## ⏳ 後回し（ローンチ後）
 - フェーズ8Aの文面微調整（T8A-04/05/06）はローンチ後でOK。マーケ文体統一や購入導線の心理整備は後追いで実施。
 - フェーズ8B（LP）、フェーズ9（キャラクター設計）、フェーズ10（マーケ・グロース）は全てローンチ後に回す。
 
 ## ✅ Done（完了条件つき）
+- [x] T3-09: 待機メッセージのクリーンアップ。完了条件: 回答生成後に「🔮鑑定中です…（しばらくお待ちください）」が確実に削除されるよう安全な delete ヘルパーを導入し、main にマージ済み。
 - [x] T8A-02: スリーカード（過去/現在/未来）時間軸フォーマットを固定。完了条件: /read3 出力が `《カード》：` 行3つ＋役割固定で見出しなし、箇条書きは未来のみ最大3点になるよう finalizer で強制し、bot/main.py にマージ済み。
 - [x] 出力制約テスト: 《カード》行/禁止語/箇条書き位置の自動検証。完了条件: `tests/test_drawn_cards_format.py` で《カード》3回・見出し禁止語なし・箇条書きは3枚目のみ最大3件で green を確認できる。
 - [x] T3-08: 同一ユーザー並行セッションのロック/待機案内を統一（bot/main.py のユーザー別 lock + queued 表示で順番処理に集約）。
@@ -32,7 +34,6 @@
 - T8B-01: LP を作るか（作るなら1ページ）。理由: 国内クローズドβでは外部LPを使った集客を行わないため公開判断まで凍結。
 
 ## 🔥 Next 10 tasks（優先度順・完了条件つき）
-完了/凍結済み（T3-08, T4-06, T5-06, T5-07, T7-01, T7-05, T7-06, T3-07, T4-07）は上の Done / Not doing に移動済み。
 1. [ ] T8A-04: 相談モードの価値定義（短文・共感・行動提案）。完了条件: 現行の相談モード文体を守りつつ、価値の説明・できること/できないこと・簡易提案例が docs/ux_copy.md と /help の案内文にまとまる（コード挙動は維持）。
 2. [ ] T8A-05: “購入”の心理導線（無料→体験→不足→解決）。完了条件: /start, /buy, /status の文面テンプレを docs/ux_copy.md に揃え、無料枠からの誘導が1画面で伝わることをステージングで確認（UIロジック変更なし）。
 3. [ ] T8A-06: メッセージ文体の統一（丁寧でやさしい敬語）。完了条件: bot/texts/ja.py の主要案内（/help, 入力エラー）が同じトーンで揃い、docs/ux_copy.md にスタイルガイドを残す。
@@ -46,15 +47,18 @@
 
 ## 🚀 Launch (public + marketing) - 48h checklist
 
-- ショートラン（30〜60分での合否判定）は `docs/launch_checklist.md` 冒頭にまとめ済み。時間がない場合はまずそちらで通し確認する。
+詳細と手順は `docs/launch_checklist.md` に集約。WBS 側では進捗と成果物の置き場所だけを管理する。
 
-- [ ] T-48h: PowerShell で `tools/sync.ps1` を実行 → `pytest -q` green をスクショ保存（失敗時は中断して修正）。
-- [ ] T-48h: `.env` 本番値（BOT_TOKEN / OPENAI_API_KEY / 管理者ID / PAYWALL）を再確認し、`PAYWALL_ENABLED` 初期状態と切替タイミングを決めて runbook にメモ。
+- 成果物の置き場所: スクショ→`screenshots/`、ログ→`logs/`、運用メモ→`docs/WBS_PROGRESS.md`。
+- ショートラン（30〜60分）の合否判定は `docs/launch_checklist.md` 冒頭を参照。
+
+- [ ] T-48h: PowerShell で `tools/sync.ps1` を実行 → `pytest -q` green を確認し、コンソールログを `logs/` に保存。
+- [ ] T-48h: `.env` 本番値（BOT_TOKEN / OPENAI_API_KEY / 管理者ID / PAYWALL）を確認し、`PAYWALL_ENABLED` の初期状態と切替タイミングを runbook にメモ。
 - [ ] T-36h: SQLite backup/restore 手順を読み上げテストし、復旧コマンドをチャンネル共有（`cp` の具体例つき）。
-- [ ] T-24h: 決済スモーク（/buy→購入→/status反映、/buy 連打で dedup、stale callback が安全に案内）。失敗時の手動付与/返金手順を runbook で再確認。
+- [ ] T-24h: 決済スモーク（/buy→購入→/status 反映、/buy 連打で dedup、stale callback の案内安全性）。失敗時の手動付与/返金手順を runbook で再確認。
 - [ ] T-12h: /start と /help の文面を最新テンプレ（docs/ux_copy.md）で確認し、質問例・料金・次アクションが1画面で伝わることをステージングでスクショ。
 - [ ] T-6h: SNS（X/IG）プロフィール/固定投稿/リンク導線を完成。価値提案 1 文と購入導線を docs/marketing.md から引用。
-- [ ] T-3h: Bot 再起動→`logs/bot.log` に rid 付きで出力されることを確認し、/admin stats で直近件数が読めるかを見る。
+- [ ] T-3h: Bot を再起動し `logs/bot.log` に rid 付きで出力されることを確認、/admin stats で直近件数を確認。
 - [ ] T-0: 公開告知（3投稿）→ 24h 監視（ログ/決済/離脱点）→ 翌日小修正。障害時は runbook「初動テンプレ」に沿って応答。
 
 ## 記号ルール

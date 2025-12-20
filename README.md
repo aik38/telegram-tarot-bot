@@ -1,8 +1,7 @@
 # Telegram Tarot Bot
 
-Telegram向けタロット占いボットのミニマルな開発用セットアップです。
-価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md`（MVP向け48hチェックリスト、冒頭に30〜60分のショートラン手順あり）を参照してください。WBS は `docs/WBS.md`（canonical）、進捗スナップショットは `docs/WBS_PROGRESS.md` を参照してください。
-運用時の SQLite バックアップ/リストア手順は `docs/sqlite_backup.md` にまとめています。
+Telegram向けタロット占いボットのミニマルな開発用セットアップです。このREADMEは入口ガイドで、進行状況やタスクの最新情報は `docs/WBS.md`（唯一のWBS）を参照してください。スナップショットは `docs/WBS_PROGRESS.md` に残しています。
+価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md`（MVP向け48hチェックリスト、冒頭に30〜60分のショートラン手順あり）を参照してください。運用時の SQLite バックアップ/リストア手順は `docs/sqlite_backup.md` にまとめています。
 
 ## 最初にやること（30〜60分ショートラン）
 `docs/launch_checklist.md` のショートラン手順を起点に、以下の3ステップで MVP ローンチを最短確認します。
@@ -190,36 +189,12 @@ git push origin main
 3) Use Codex (web) to implement 1 task per PR
 4) After merge: run sync again and smoke-test `/start` `/buy` `/status`
 
+## Launch checklist (public + marketing start)
+詳細は `docs/launch_checklist.md` に集約。進行状況とWBSは `docs/WBS.md` を参照してください。
 
-
-## Launch: 48h checklist (public + marketing start)
-
-### T-48h〜T-24h（技術・運用を固める）
-- [ ] `tools/sync.ps1` 実行 → `pytest` が通る（緑で終了する）。PowerShell から `tools/sync.ps1` を実行してコンソールログを保存しておく。
-- [ ] `.env`（本番用）を確認：BOT_TOKEN / OPENAI_API_KEY / 管理者ID / PAYWALL設定
-- [ ] 決済の本番スモーク（Stars/決済導線）
-  - [ ] `/buy` → 購入 → 成功メッセージ → `/status` に反映
-  - [ ] `/buy` 連打しても二重付与されない（dedup TTL が効く）
-  - [ ] stale callback（古いボタン）で安全に案内される
-- [ ] 障害時の復旧手順を“自分で”一回なぞる
-  - [ ] SQLite backup/restore 手順（docs）を確認し、復旧できる想像がつく
-- [ ] ログ確認ポイントを決める（「どこを見れば異常かわかるか」）
-- [ ] 管理者オペ（例：`/admin` や付与コマンド）が動く＆誤操作しにくい
-
-### T-24h〜T-6h（体験・文章・導線を磨く）
-- [ ] `/start` の導入文が「何ができるか」「料金/回数」「まず何を打てばいいか」を1画面で説明できている
-- [ ] `/help` に “質問例（恋愛/仕事/人生など）” があり、ユーザーが迷わない
-- [ ] 画像機能や追加オプションがある場合：ON/OFF時の表示が破綻しない
-- [ ] 無料枠→課金導線の言い回しが強すぎず、でも迷わせない
-
-### T-6h〜T-0（公開・集客開始）
-- [ ] X/Instagram/（必要なら）TikTok のプロフィール整備
-  - [ ] アイコン / ヘッダー / BIO / 固定ポスト（使い方 + 価格 + リンク）
-- [ ] 投稿テンプレ（3本）を用意：①初回告知 ②使い方 ③実例（ぼかして）
-- [ ] 初動の返信オペを決める（質問DMにどう返すか、どこへ誘導するか）
-- [ ] “トラブル時アナウンス文” を用意（決済遅延、API混雑、メンテ中）
-- [ ] ローンチ後24hはログ/売上/離脱点をチェックして、翌日に小修正できる状態
-
-### Rollback（やばい時の戻し方）
-- [ ] 重大障害時は「決済停止/案内のみ」に切り替えられる（運用方針を決めておく）
-- [ ] DB復旧・設定差し戻し・デプロイ戻しの手順が docs にある
+## 次に見るドキュメント
+- `docs/WBS.md`: 唯一のWBS（進行中タスクと優先度）
+- `docs/WBS_PROGRESS.md`: 進捗スナップショット
+- `docs/launch_checklist.md`: ショートラン＆48hチェックリスト
+- `docs/runbook.md`: 運用・トラブルシュート
+- `docs/pricing_notes.md`: 価格と課金まわりのメモ
