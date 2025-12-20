@@ -1,4 +1,25 @@
-# WBS_PROGRESS - 2025-12-21（launch docs hardening + UX copy pass）
+# WBS_PROGRESS
+
+## 2025-12-21（PR #79/#80, translation coverage & dedup guards）
+
+### サマリ
+- PR #79（multilingual audit）と PR #80（final audit + translation coverage + duplicate processing guards）を main に統合。翻訳キーと重複処理ガードのリグレッションテストを追加。
+- テスト: `python -m compileall bot tests tools` ✅、`pytest -q` ✅（101 passed）、`python tools/check_translation_keys.py` で missing/extra = 0（ja/pt）。
+- 翻訳キー整合: `tests/test_translation_keys.py` で ja/pt の missing/extra を英語基準で検出、CLI は `tools/check_translation_keys.py`。
+- 重複処理ガード: `tests/test_deduplication_guards.py` で同一 `message_id` の tarot/chat を 1 回に限定。
+- 新規課題: 「Language」ボタンが無反応になるケースあり（/start 直後の inline 選択で応答なし）。
+  - 再現条件（報告ベース）: /start → 言語選択ボタンをタップしても callback が返らないケースがある。
+  - 暫定原因の仮説: callback の ack 漏れまたは dedup/throttle 側で message_id が再利用されて弾かれている可能性。ログ採取と callback_data/handler の突合が必要。
+  - 次アクション: 言語切替の callback テストを追加し、`lang:set:*` の ack と状態遷移を確認するタスクを WBS に起票。
+- WBS 更新履歴:
+  - 「現在地/Done」に PR #79/#80 由来の翻訳キー整合・重複ガードを反映。
+  - 「Next tasks」に Language ボタン修正タスクを追加。
+  - 投稿テンプレ（T10-03）を Parking に移し、ローンチ前のバグ修正を優先（詳細/理由は下記の Parking 記録を参照）。
+- README: Quickstart/Tests/Multilingual/Payments/Troubleshooting を1本化し、重複していた「起動メモ」ブロックを統合。
+
+---
+
+## 2025-12-21（launch docs hardening + UX copy pass）
 
 目的: ローンチ前の運用ドキュメント強化（launch checklist/runbook/ux copy/marketing）を反映し、canonical WBS（docs/WBS.md）を最新化したスナップショット。タロット結果フォーマット・料金最適化（T4-07）・相談モード仕様（T3-07）は触らない方針を維持。
 
