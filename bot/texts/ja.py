@@ -131,7 +131,34 @@ UNLOCK_TICKET_ADDED = "{product}を追加しました。現在の残り枚数は
 UNLOCK_PASS_GRANTED = "{duration}を付与しました。\n有効期限: {until_text}{remaining_hint}"
 UNLOCK_IMAGES_ENABLED = "画像付きのオプションを有効化しました。これからの占いにやさしい彩りを添えますね。"
 PURCHASE_GENERIC_THANKS = "ご購入ありがとうございます。必要に応じてサポートまでお知らせください。"
+TERMS_TEXT = (
+    "利用規約（抜粋）\n"
+    "・18歳以上の自己責任で利用してください。\n"
+    "・禁止/注意テーマ（医療/診断/薬、法律/契約/紛争、投資助言、自傷/他害）は専門家へご相談ください。\n"
+    "・迷惑行為・違法行為への利用は禁止です。\n"
+    "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
+    "・連絡先: {support_email}\n\n"
+    "購入前に上記へ同意してください。"
+)
+SUPPORT_TEXT = (
+    "お問い合わせ窓口です。\n"
+    "・購入者サポート: {support_email}\n"
+    "・一般問い合わせ: Telegram @akolasia_support\n"
+    "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
+)
+PAY_SUPPORT_TEXT = (
+    "決済トラブルの受付です。下記テンプレをコピーしてお知らせください。\n"
+    "購入日時: \n"
+    "商品名/SKU: \n"
+    "charge_id: （表示される場合）\n"
+    "支払方法: Stars / その他\n"
+    "スクリーンショット: あり/なし\n"
+    "確認のうえ、必要に応じて返金や付与対応を行います。\n"
+    "連絡先: {support_email}"
+)
 TERMS_PROMPT_REMINDER = "購入前に /terms を確認し、同意の上でお進みください。\n/terms から同意をお願いします。"
+TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意をお願いします。"
+TERMS_PROMPT_FOLLOWUP = "続ける前に /terms を確認し、同意してください。"
 TERMS_BUTTON_AGREE = "同意する"
 TERMS_BUTTON_VIEW = "利用規約を確認"
 TERMS_BUTTON_AGREE_AND_BUY = "同意して購入へ進む"
