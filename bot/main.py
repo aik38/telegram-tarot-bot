@@ -91,11 +91,9 @@ from core.monetization import (
 )
 from core.logging import request_id_var, setup_logging
 from core.prompts import (
-    CONSULT_SYSTEM_PROMPT,
-    TAROT_OUTPUT_RULES,
-    TAROT_FIXED_OUTPUT_FORMAT,
-    TIME_AXIS_FIXED_OUTPUT_FORMAT,
-    TIME_AXIS_TAROT_RULES,
+    get_consult_system_prompt,
+    get_tarot_fixed_output_format,
+    get_tarot_output_rules,
     get_tarot_system_prompt,
     theme_instructions,
 )
@@ -109,6 +107,7 @@ from core.tarot import (
     draw_cards,
     is_tarot_request,
     orientation_label,
+    orientation_label_by_lang,
     strip_tarot_sentences,
 )
 from core.tarot.spreads import Spread
@@ -282,6 +281,57 @@ TAROT_THEME_EXAMPLES_PT: dict[str, tuple[str, ...]] = {
         "Minhas finanças vão estabilizar?",
     ),
 }
+POSITION_LABELS_I18N: dict[str, dict[str, str]] = {
+    "main": {"en": "Main message", "pt": "Mensagem principal"},
+    "past": {"en": "Past", "pt": "Passado"},
+    "present": {"en": "Present", "pt": "Presente"},
+    "future": {"en": "Future", "pt": "Futuro"},
+    "your_feelings": {"en": "Your feelings", "pt": "Seus sentimentos"},
+    "partner_feelings": {"en": "Partner's feelings", "pt": "Sentimentos da outra pessoa"},
+    "current_situation": {"en": "Current situation", "pt": "Situação atual"},
+    "obstacle": {"en": "Obstacle", "pt": "Obstáculo"},
+    "near_future": {"en": "Near future", "pt": "Futuro próximo"},
+    "advice": {"en": "Advice", "pt": "Conselho"},
+    "outcome": {"en": "Outcome", "pt": "Resultado"},
+    "challenge": {"en": "Challenge", "pt": "Desafio"},
+    "conscious": {"en": "Conscious motives", "pt": "Motivações conscientes"},
+    "subconscious": {"en": "Subconscious", "pt": "Subconsciente"},
+    "self_position": {"en": "Advice (your stance)", "pt": "Conselho (sua postura)"},
+    "environment": {"en": "Environment", "pt": "Ambiente"},
+    "hopes_fears": {"en": "Hopes / Fears", "pt": "Esperanças / medos"},
+}
+POSITION_MEANINGS_I18N: dict[str, dict[str, str]] = {
+    "main": {"en": "Main message for you.", "pt": "Mensagem principal para você."},
+    "past": {"en": "How past events or feelings shape the present.", "pt": "Como o passado influencia o presente."},
+    "present": {"en": "Clarifies current hesitation, stagnation, or crossroads.", "pt": "Organiza dúvidas ou travas do momento."},
+    "future": {
+        "en": "Upcoming flow, possibilities, and cautions, including hints for past/present.",
+        "pt": "Fluxo futuro, possibilidades e cuidados, incluindo alertas sobre passado/presente.",
+    },
+    "your_feelings": {"en": "Your true feelings and emotional flow.", "pt": "Seus sentimentos verdadeiros e o fluxo deles."},
+    "partner_feelings": {"en": "The other person's honest feelings toward you.", "pt": "O que a outra pessoa sente por você."},
+    "current_situation": {"en": "The current relationship status and atmosphere around you two.", "pt": "O estado atual e o clima ao redor de vocês."},
+    "obstacle": {"en": "Causes of distance, friction, or obstacles.", "pt": "Causas de distância, atrito ou obstáculos."},
+    "near_future": {"en": "Near-term flow and signs of change.", "pt": "Fluxo de curto prazo e sinais de mudança."},
+    "advice": {"en": "Actions or mindset you can take for a better future.", "pt": "Ações ou posturas que você pode tomar para melhorar."},
+    "outcome": {"en": "Likely result or landing point if the current flow continues.", "pt": "Resultado provável se o fluxo atual continuar."},
+    "challenge": {"en": "Obstacle or issue to overcome.", "pt": "Obstáculo ou questão a superar."},
+    "conscious": {"en": "What you are aware of—recognized aims or wishes.", "pt": "O que você percebe: objetivos ou desejos conscientes."},
+    "subconscious": {"en": "Unseen motives or deeper desires.", "pt": "Motivações ocultas ou desejos mais profundos."},
+    "self_position": {"en": "Your stance or role and how to engage.", "pt": "Sua postura ou papel e como agir."},
+    "environment": {"en": "Influences and support/constraints around you.", "pt": "Influências e apoios/limitações ao redor."},
+    "hopes_fears": {"en": "Hopes and what you wish to avoid.", "pt": "Esperanças e o que deseja evitar."},
+}
+
+
+def _get_position_label_translation(position_id: str, lang: str) -> str | None:
+    lang_code = normalize_lang(lang)
+    return (POSITION_LABELS_I18N.get(position_id) or {}).get(lang_code)
+
+
+def _get_position_meaning_translation(position_id: str, lang: str) -> str | None:
+    lang_code = normalize_lang(lang)
+    return (POSITION_MEANINGS_I18N.get(position_id) or {}).get(lang_code)
 CONSULT_MODE_PROMPT = (
     "💬相談モードです。なんでも相談してね。お話し聞くよ！"
 )
@@ -293,6 +343,30 @@ STATUS_MODE_PROMPT = "📊現在のご利用状況です。"
 CAUTION_NOTE = (
     "※医療・法律・投資の判断は専門家にご相談ください（一般的な情報としてお伝えします）。"
 )
+CAUTION_NOTES = {
+    "ja": CAUTION_NOTE,
+    "en": "※ For medical, legal, or investment decisions, please consult professionals (general information only).",
+    "pt": "※ Para decisões médicas, jurídicas ou de investimento, consulte profissionais (informação geral).",
+}
+TIME_RANGE_TEXTS = {
+    "ja": "前後3か月",
+    "en": "3 months",
+    "pt": "3 meses",
+}
+REWRITE_PROMPTS = {
+    "ja": (
+        "次の文章から、タロット・カード・占いに関する言及をすべて取り除いて日本語で書き直してください。"
+        "丁寧で落ち着いた敬語を維持し、相談の意図や励ましは残してください。"
+    ),
+    "en": (
+        "Rewrite the text in English, removing any mention of tarot, cards, or divination."
+        " Keep a calm, supportive tone and preserve the intent of the consultation."
+    ),
+    "pt": (
+        "Reescreva o texto em português, removendo qualquer menção a tarô, cartas ou adivinhação."
+        " Mantenha um tom calmo e acolhedor e preserve a intenção da conversa."
+    ),
+}
 CAUTION_KEYWORDS = {
     "medical": ["病気", "症状", "診断", "薬", "治療", "病院"],
     "legal": ["法律", "弁護士", "訴訟", "契約", "違法", "逮捕"],
@@ -436,11 +510,12 @@ def _contains_caution_keyword(text: str) -> bool:
     return False
 
 
-def append_caution_note(user_text: str, response: str) -> str:
+def append_caution_note(user_text: str, response: str, *, lang: str | None = "ja") -> str:
     if not user_text or not _contains_caution_keyword(user_text):
         return response
+    caution_note = get_caution_note(lang)
     separator = "\n\n" if not response.endswith("\n") else "\n"
-    return f"{response}{separator}{CAUTION_NOTE}"
+    return f"{response}{separator}{caution_note}"
 
 
 def classify_sensitive_topics(text: str) -> set[str]:
@@ -540,7 +615,44 @@ def _parse_invoice_payload(payload: str) -> tuple[str | None, int | None]:
     return (str(sku) if sku is not None else None, user_id)
 
 
-CARD_LINE_PREFIX = "《カード》："
+CARD_LINE_PREFIXES = {
+    "ja": "《カード》：",
+    "en": "《Card》: ",
+    "pt": "《Carta》: ",
+}
+CARD_LINE_PREFIX = CARD_LINE_PREFIXES["ja"]
+CARD_LINE_ERROR_TEXT = {
+    "ja": "カード情報を取得できませんでした。",
+    "en": "Could not retrieve card details.",
+    "pt": "Não foi possível obter informações das cartas.",
+}
+RULES_HEADER = {
+    "ja": "出力ルール:",
+    "en": "Output rules:",
+    "pt": "Regras de saída:",
+}
+
+
+def get_card_line_prefix(lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    return CARD_LINE_PREFIXES.get(lang_code, CARD_LINE_PREFIX)
+
+
+def get_rules_header(lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    return RULES_HEADER.get(lang_code, RULES_HEADER["ja"])
+
+
+def get_caution_note(lang: str | None = "ja") -> str:
+    return CAUTION_NOTES.get(normalize_lang(lang), CAUTION_NOTE)
+
+
+def get_time_range_text(lang: str | None = "ja") -> str:
+    return TIME_RANGE_TEXTS.get(normalize_lang(lang), TIME_RANGE_TEXTS["ja"])
+
+
+def get_rewrite_prompt(lang: str | None = "ja") -> str:
+    return REWRITE_PROMPTS.get(normalize_lang(lang), REWRITE_PROMPTS["ja"])
 
 _META_HEADING_PATTERNS = (
     r"^(まとめとして|結論として|総括として|総評として|まとめると|結論から言うと)[、,:：]?\s*",
@@ -555,7 +667,10 @@ def _strip_meta_prefix(text: str) -> str:
 
 
 def _inject_position_headings(
-    lines: list[str], position_labels: Sequence[str] | None
+    lines: list[str],
+    position_labels: Sequence[str] | None,
+    *,
+    card_line_prefix: str = CARD_LINE_PREFIX,
 ) -> list[str]:
     if not position_labels:
         return lines
@@ -569,12 +684,11 @@ def _inject_position_headings(
     if not missing_labels:
         return lines
 
-    try:
-        card_line_index = next(
-            idx for idx, line in enumerate(lines) if CARD_LINE_PREFIX in line
-        )
-    except StopIteration:
-        card_line_index = None
+    card_line_index = None
+    for idx, line in enumerate(lines):
+        if card_line_prefix in line:
+            card_line_index = idx
+            break
 
     insert_index = (card_line_index + 1) if card_line_index is not None else len(lines)
     new_lines: list[str] = []
@@ -637,10 +751,19 @@ def format_tarot_answer(
     card_line: str | None = None,
     *,
     position_labels: Sequence[str] | None = None,
+    lang: str | None = "ja",
+    card_line_prefix: str | None = None,
 ) -> str:
+    lang_code = normalize_lang(lang)
+    effective_prefix = card_line_prefix or get_card_line_prefix(lang_code)
     content = (text or "").strip()
     if not content:
-        return "占い結果をうまく作成できませんでした。もう一度占わせてください。"
+        fallback = {
+            "ja": "占い結果をうまく作成できませんでした。もう一度占わせてください。",
+            "en": "I couldn't generate the reading properly. May I draw again?",
+            "pt": "Não consegui gerar a leitura corretamente. Posso tirar novamente?",
+        }
+        return fallback.get(lang_code, fallback["ja"])
 
     content = content.replace("🃏", "")
     content = re.sub(r"(\n\s*){3,}", "\n\n", content)
@@ -657,9 +780,9 @@ def format_tarot_answer(
         cleaned = cleaned.replace("【メインメッセージ】", "")
         cleaned = _strip_meta_prefix(cleaned)
         cleaned = re.sub(r"^カード：", "引いたカード：", cleaned)
-        cleaned = re.sub(r"^引いたカード[：:]", CARD_LINE_PREFIX, cleaned)
-        cleaned = re.sub(r"^《?カード》?[：:]", CARD_LINE_PREFIX, cleaned)
-        if CARD_LINE_PREFIX in cleaned:
+        cleaned = re.sub(r"^引いたカード[：:]", effective_prefix, cleaned)
+        cleaned = re.sub(r"^《?(?:カード|Card|Carta)》?[：:]", effective_prefix, cleaned)
+        if effective_prefix in cleaned:
             if card_line:
                 cleaned = card_line
             if card_line_found:
@@ -690,7 +813,11 @@ def format_tarot_answer(
         compacted.pop()
 
     compacted = _finalize_tarot_lines(compacted)
-    compacted = _inject_position_headings(compacted, position_labels)
+    compacted = _inject_position_headings(
+        compacted,
+        position_labels if lang_code == "ja" else None,
+        card_line_prefix=effective_prefix,
+    )
     formatted = "\n".join(compacted)
     if len(formatted) > 1400:
         formatted = formatted[:1380].rstrip() + "…"
@@ -703,13 +830,26 @@ def format_long_answer(
     card_line: str | None = None,
     *,
     position_labels: Sequence[str] | None = None,
+    lang: str | None = "ja",
+    card_line_prefix: str | None = None,
 ) -> str:
     if mode == "tarot":
-        return format_tarot_answer(text, card_line, position_labels=position_labels)
+        return format_tarot_answer(
+            text,
+            card_line,
+            position_labels=position_labels,
+            lang=lang,
+            card_line_prefix=card_line_prefix,
+        )
 
     content = (text or "").strip()
     if not content:
-        return "少し情報が足りないようです。もう一度教えてくださいね。"
+        fallback = {
+            "ja": "少し情報が足りないようです。もう一度教えてくださいね。",
+            "en": "I might need a bit more detail. Could you share that again?",
+            "pt": "Preciso de um pouco mais de detalhe. Pode me contar de novo?",
+        }
+        return fallback.get(normalize_lang(lang), fallback["ja"])
 
     lines = [
         re.sub(r"^結論：?\s*", "", line)
@@ -1049,10 +1189,10 @@ async def _handle_stale_interaction(
         logger.exception("Failed to notify user about stale interaction", extra={"payload": payload, "user_id": user_id})
 
 
-def build_general_chat_messages(user_query: str) -> list[dict[str, str]]:
+def build_general_chat_messages(user_query: str, *, lang: str | None = "ja") -> list[dict[str, str]]:
     """通常チャットモードの system prompt を組み立てる。"""
     return [
-        {"role": "system", "content": CONSULT_SYSTEM_PROMPT},
+        {"role": "system", "content": get_consult_system_prompt(lang)},
         {"role": "user", "content": user_query},
     ]
 
@@ -1372,13 +1512,6 @@ TICKET_SKU_TO_COLUMN: dict[str, TicketColumn] = {
     "TICKET_7": "tickets_7",
     "TICKET_10": "tickets_10",
 }
-
-
-SHORT_TAROT_OUTPUT_RULES = [
-    "引いたカード名（正逆）と位置を最初に短く伝える。",
-    "結論とアドバイスを中心に180〜260文字でまとめる。",
-    "専門領域は専門家相談を促し、断定を避けてやさしく。",
-]
 
 
 def _days_since_first_seen(user: UserRecord, now: datetime) -> int:
@@ -1794,44 +1927,115 @@ def build_tarot_messages(
     short: bool = False,
     theme: str | None = None,
     action_count: int | None = None,
+    lang: str | None = "ja",
 ) -> list[dict[str, str]]:
+    lang_code = normalize_lang(lang)
     is_time_axis = spread.id == THREE_CARD_TIME_AXIS.id
-    rules = TIME_AXIS_TAROT_RULES if is_time_axis else SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
+    rules = get_tarot_output_rules(time_axis=is_time_axis, short=short, lang=lang_code)
     rules_text = "\n".join(f"- {rule}" for rule in rules)
-    tarot_system_prompt = f"{get_tarot_system_prompt(theme, time_axis=is_time_axis)}\n出力ルール:\n{rules_text}"
-    theme_focus = theme_instructions(theme)
+    tarot_system_prompt = (
+        f"{get_tarot_system_prompt(theme, time_axis=is_time_axis, lang=lang_code)}\n"
+        f"{get_rules_header(lang_code)}\n{rules_text}"
+    )
+    theme_focus = theme_instructions(theme, lang=lang_code)
+    format_template = get_tarot_fixed_output_format(lang_code, time_axis=is_time_axis)
     if is_time_axis:
-        action_count_text = "- 箇条書きは未来パートにのみ最大3点まで。過去と現在では使わない。"
-        scope_text = "- 時間の目安が無い場合は前後3か月の流れとして触れる。"
-        format_hint = (
-            "過去・現在・未来の時間軸リーディングです。見出しや章ラベルを使わず、次の並びと改行を必ず守ってください:\n"
-            f"{TIME_AXIS_FIXED_OUTPUT_FORMAT}\n"
-            f"{action_count_text}\n"
-            f"{scope_text}\n"
-            "- カード名は各ブロックの《カード》行で必ず書く。🃏などの絵文字は禁止。\n"
-            f"- テーマ別フォーカス: {theme_focus}"
-        )
+        if lang_code == "ja":
+            action_count_text = "- 箇条書きは未来パートにのみ最大3点まで。過去と現在では使わない。"
+            scope_text = "- 時間の目安が無い場合は前後3か月の流れとして触れる。"
+            format_hint = (
+                "過去・現在・未来の時間軸リーディングです。見出しや章ラベルを使わず、次の並びと改行を必ず守ってください:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                f"{scope_text}\n"
+                "- カード名は各ブロックの《カード》行で必ず書く。🃏などの絵文字は禁止。\n"
+                f"- テーマ別フォーカス: {theme_focus}"
+            )
+        elif lang_code == "pt":
+            action_count_text = "- Use tópicos apenas no bloco do futuro, no máximo 3. Não use no passado/presente."
+            scope_text = "- Se não houver prazo, considere cerca de 3 meses de fluxo."
+            format_hint = (
+                "Leitura em linha do tempo (passado/presente/futuro). Não use títulos; siga a ordem e quebras abaixo:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                f"{scope_text}\n"
+                "- Cada bloco precisa da linha “《Carta》” com nome e orientação; evite emojis como 🃏.\n"
+                f"- Foco do tema: {theme_focus}"
+            )
+        else:
+            action_count_text = "- Bullets only in the future block, maximum 3. Do not use them for past/present."
+            scope_text = "- If no time scale is given, read it as about 3 months of flow."
+            format_hint = (
+                "This is a past–present–future reading. No headings; keep this order and line breaks:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                f"{scope_text}\n"
+                "- Each block must include the card name on the “《Card》” line; avoid emojis like 🃏.\n"
+                f"- Theme focus: {theme_focus}"
+            )
     else:
         if action_count is not None:
             if action_count == 4:
-                action_count_text = (
-                    "- 次の一手は必ず4個。内容が薄い場合は各項目を短くしないで具体化する。"
-                )
+                if lang_code == "ja":
+                    action_count_text = "- 次の一手は必ず4個。内容が薄い場合は各項目を短くしないで具体化する。"
+                elif lang_code == "pt":
+                    action_count_text = "- Traga exatamente 4 próximos passos. Se estiverem rasos, deixe cada item mais concreto."
+                else:
+                    action_count_text = "- Provide exactly 4 next steps. If they feel thin, make each item concrete."
             elif action_count in {2, 3}:
-                action_count_text = (
-                    f"- 次の一手は必ず{action_count}個。4個は禁止。必要な要素は各項目に統合して良い。"
-                )
+                if lang_code == "ja":
+                    action_count_text = (
+                        f"- 次の一手は必ず{action_count}個。4個は禁止。必要な要素は各項目に統合して良い。"
+                    )
+                elif lang_code == "pt":
+                    action_count_text = (
+                        f"- Entregue exatamente {action_count} próximos passos. Não adicione um 4º; combine ideias se precisar."
+                    )
+                else:
+                    action_count_text = (
+                        f"- Provide exactly {action_count} next steps. Do not add a 4th; merge ideas when needed."
+                    )
             else:
-                action_count_text = "- 次の一手はシステムの指示個数を守り、必要でも4個までに抑える。"
+                if lang_code == "ja":
+                    action_count_text = "- 次の一手はシステムの指示個数を守り、必要でも4個までに抑える。"
+                elif lang_code == "pt":
+                    action_count_text = "- Use o número pedido de próximos passos; no máximo 4 mesmo se precisar mais."
+                else:
+                    action_count_text = "- Follow the requested number of next steps; cap them at 4 even if you need more."
         else:
-            action_count_text = "- 次の一手は2〜3個を基本に、必要なときだけ4個まで。"
+            if lang_code == "ja":
+                action_count_text = "- 次の一手は2〜3個を基本に、必要なときだけ4個まで。"
+            elif lang_code == "pt":
+                action_count_text = "- Use 2–3 próximos passos como padrão e só chegue a 4 se for necessário."
+            else:
+                action_count_text = "- Default to 2–3 next steps; use up to 4 only when needed."
         format_hint = (
-            "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
-            f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
-            f"{action_count_text}\n"
-            "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
-            "- カード名は「《カード》：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
-            f"- テーマ別フォーカス: {theme_focus}"
+            (
+                "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
+                "- カード名は「《カード》：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
+                f"- テーマ別フォーカス: {theme_focus}"
+            )
+            if lang_code == "ja"
+            else (
+                "Follow this order and line breaks without headings or emojis:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                "- Aim for 350–650 characters for 1 card; 550–900 for 3+; keep under 1400.\n"
+                '- Give the card name only once on the "《Card》" line; no 🃏 emojis.\n'
+                f"- Theme focus: {theme_focus}"
+            )
+            if lang_code == "en"
+            else (
+                "Siga esta ordem e quebras de linha, sem títulos nem emojis:\n"
+                f"{format_template}\n"
+                f"{action_count_text}\n"
+                "- Mire em 350–650 caracteres para 1 carta; 550–900 para 3+; mantenha abaixo de 1400.\n"
+                '- Informe o nome da carta só uma vez na linha "《Carta》"; sem emoji 🃏.\n'
+                f"- Foco do tema: {theme_focus}"
+            )
         )
 
     tarot_payload = {
@@ -1839,6 +2043,7 @@ def build_tarot_messages(
         "spread_name_ja": spread.name_ja,
         "positions": drawn_cards,
         "user_question": user_query,
+        "user_lang": lang_code,
     }
 
     return [
@@ -1849,35 +2054,50 @@ def build_tarot_messages(
     ]
 
 
-def format_drawn_cards(drawn_cards: list[dict[str, str]]) -> str:
+def format_drawn_cards(drawn_cards: list[dict[str, str]], *, lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    prefix = get_card_line_prefix(lang_code)
     if not drawn_cards:
-        return f"{CARD_LINE_PREFIX}カード情報を取得できませんでした。"
+        message = CARD_LINE_ERROR_TEXT.get(lang_code, CARD_LINE_ERROR_TEXT["ja"])
+        return f"{prefix}{message}"
 
     card_labels = []
     for item in drawn_cards:
         card = item.get("card", {})
-        card_name = card.get("name_ja") or "不明なカード"
-        orientation = card.get("orientation_label_ja")
-        card_label = f"{card_name}（{orientation}）" if orientation else card_name
-        position_label = item.get("label_ja")
+        card_name = (
+            card.get(f"name_{lang_code}")
+            or card.get("name_en")
+            or card.get("name_ja")
+            or "不明なカード"
+        )
+        orientation_label = card.get(f"orientation_label_{lang_code}")
+        if not orientation_label:
+            orientation = (card.get("orientation") or "").lower()
+            orientation_label = orientation_label_by_lang(orientation == "reversed", lang_code)
+        if lang_code == "ja":
+            card_label = f"{card_name}（{orientation_label}）" if orientation_label else card_name
+        else:
+            card_label = f"{card_name} ({orientation_label})" if orientation_label else card_name
+        position_label = item.get(f"label_{lang_code}") if lang_code != "ja" else item.get("label_ja")
         if position_label and position_label.strip() != "メインメッセージ":
             card_labels.append(f"{card_label} - {position_label}")
         else:
             card_labels.append(card_label)
-    return CARD_LINE_PREFIX + "、".join(card_labels)
+    separator = "、" if lang_code == "ja" else ", "
+    return prefix + separator.join(card_labels)
 
 
-def ensure_tarot_response_prefixed(answer: str, heading: str) -> str:
-    if answer.lstrip().startswith(CARD_LINE_PREFIX):
+def ensure_tarot_response_prefixed(
+    answer: str, heading: str, *, card_line_prefix: str | None = None
+) -> str:
+    prefix = card_line_prefix or CARD_LINE_PREFIX
+    if answer.lstrip().startswith(prefix):
         return answer
     return f"{heading}\n{answer}" if heading else answer
 
 
-async def rewrite_chat_response(original: str) -> tuple[str, bool]:
-    rewrite_prompt = (
-        "次の文章から、タロット・カード・占いに関する言及をすべて取り除いて日本語で書き直してください。"
-        "丁寧で落ち着いた敬語を維持し、相談の意図や励ましは残してください。"
-    )
+async def rewrite_chat_response(original: str, *, lang: str | None = "ja") -> tuple[str, bool]:
+    rewrite_prompt = get_rewrite_prompt(lang)
 
     messages = [
         {"role": "system", "content": rewrite_prompt},
@@ -1888,13 +2108,21 @@ async def rewrite_chat_response(original: str) -> tuple[str, bool]:
 
 
 async def ensure_general_chat_safety(
-    answer: str, *, rewrite_func=rewrite_chat_response
+    answer: str, *, rewrite_func=rewrite_chat_response, lang: str | None = "ja"
 ) -> str:
     if not contains_tarot_like(answer):
         return answer
 
     try:
-        rewritten, fatal = await rewrite_func(answer)
+        rewritten, fatal = await rewrite_func(answer, lang=lang)
+    except TypeError as exc:
+        try:
+            rewritten, fatal = await rewrite_func(answer)
+        except Exception:
+            logger.exception("Unexpected error during chat rewrite", exc_info=True)
+            rewritten, fatal = "", False
+        else:
+            logger.warning("Rewrite function does not accept lang parameter: %s", exc)
     except Exception:
         logger.exception("Unexpected error during chat rewrite")
         rewritten, fatal = "", False
@@ -2859,6 +3087,8 @@ async def handle_tarot_reading(
     total_start = perf_counter()
     openai_latency_ms: float | None = None
     user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    lang_code = normalize_lang(lang)
     chat_id = get_chat_id(message)
     can_use_bot = hasattr(message, "chat") and getattr(message.chat, "id", None) is not None
     release_inflight = await _acquire_inflight(user_id, message)
@@ -2883,13 +3113,19 @@ async def handle_tarot_reading(
             {
                 "id": position.id,
                 "label_ja": position.label_ja,
+                "label_en": _get_position_label_translation(position.id, "en"),
+                "label_pt": _get_position_label_translation(position.id, "pt"),
                 "meaning_ja": position.meaning_ja,
+                "meaning_en": _get_position_meaning_translation(position.id, "en"),
+                "meaning_pt": _get_position_meaning_translation(position.id, "pt"),
                 "card": {
                     "id": item.card.id,
                     "name_ja": item.card.name_ja,
                     "name_en": item.card.name_en,
                     "orientation": "reversed" if item.is_reversed else "upright",
                     "orientation_label_ja": orientation_label(item.is_reversed),
+                    "orientation_label_en": orientation_label_by_lang(item.is_reversed, "en"),
+                    "orientation_label_pt": orientation_label_by_lang(item.is_reversed, "pt"),
                     "keywords_ja": list(keywords),
                 },
             }
@@ -2903,6 +3139,7 @@ async def handle_tarot_reading(
         short=short_response,
         theme=effective_theme,
         action_count=action_count,
+        lang=lang,
     )
 
     status_message: Message | None = None
@@ -2935,27 +3172,31 @@ async def handle_tarot_reading(
             base_answer = answer
             if guidance_note:
                 base_answer = f"{base_answer}\n\n{guidance_note}"
-            base_answer = append_caution_note(user_query, base_answer)
+            base_answer = append_caution_note(user_query, base_answer, lang=lang_code)
             formatted_answer = format_time_axis_tarot_answer(
                 base_answer,
                 drawn_cards=drawn_payload,
-                time_range_text="前後3か月",
-                caution_note=CAUTION_NOTE,
+                time_range_text=get_time_range_text(lang_code),
+                caution_note=get_caution_note(lang_code),
+                lang=lang_code,
+                card_line_prefix=get_card_line_prefix(lang_code),
             )
         else:
             formatted_answer = format_long_answer(
                 answer,
                 "tarot",
-                card_line=format_drawn_cards(drawn_payload),
-                position_labels=spread_to_use.position_labels,
+                card_line=format_drawn_cards(drawn_payload, lang=lang_code),
+                position_labels=spread_to_use.position_labels if lang_code == "ja" else None,
+                lang=lang_code,
+                card_line_prefix=get_card_line_prefix(lang_code),
             )
             if guidance_note:
                 formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
-            formatted_answer = append_caution_note(user_query, formatted_answer)
+            formatted_answer = append_caution_note(user_query, formatted_answer, lang=lang_code)
             formatted_answer = finalize_tarot_answer(
                 formatted_answer,
-                card_line_prefix=CARD_LINE_PREFIX,
-                caution_note=CAUTION_NOTE,
+                card_line_prefix=get_card_line_prefix(lang_code),
+                caution_note=get_caution_note(lang_code),
             )
         bullet_count = sum(
             1 for line in formatted_answer.splitlines() if line.lstrip().startswith("・")
@@ -3148,7 +3389,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
 
     try:
         openai_start = perf_counter()
-        answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query))
+        answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query, lang=lang))
         openai_latency_ms = (perf_counter() - openai_start) * 1000
         if fatal:
             error_text = (
@@ -3163,9 +3404,9 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 await message.answer(error_text)
             event_error = "fatal_consult"
             return
-        safe_answer = await ensure_general_chat_safety(answer)
-        safe_answer = format_long_answer(safe_answer, "consult")
-        safe_answer = append_caution_note(user_query, safe_answer)
+        safe_answer = await ensure_general_chat_safety(answer, lang=lang)
+        safe_answer = format_long_answer(safe_answer, "consult", lang=lang)
+        safe_answer = append_caution_note(user_query, safe_answer, lang=lang)
         if can_use_bot and chat_id_value is not None:
             await send_long_text(
                 chat_id_value,

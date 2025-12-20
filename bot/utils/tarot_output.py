@@ -1,6 +1,8 @@
 import re
 from typing import Iterable, Sequence
 
+from core.tarot.draws import orientation_label_by_lang
+
 
 META_PHRASES = [
     "【メインメッセージ】",
@@ -82,19 +84,27 @@ def _split_blocks(lines: Iterable[str]) -> list[list[str]]:
     return blocks
 
 
-def _build_time_axis_card_line(card: dict[str, str] | None) -> str:
+def _build_time_axis_card_line(
+    card: dict[str, str] | None,
+    *,
+    card_line_prefix: str,
+    lang: str,
+) -> str:
     card_data = card.get("card", {}) if isinstance(card, dict) else {}
-    name = card_data.get("name_ja") or "不明なカード"
-    orientation_label = card_data.get("orientation_label_ja")
+    lang_code = lang.lower()
+    name = (
+        card_data.get(f"name_{lang_code}")
+        or card_data.get("name_en")
+        or card_data.get("name_ja")
+        or "不明なカード"
+    )
+    orientation_label = card_data.get(f"orientation_label_{lang_code}")
     if not orientation_label:
         orientation = (card_data.get("orientation") or "").lower()
-        if orientation == "reversed":
-            orientation_label = "逆位置"
-        elif orientation == "upright":
-            orientation_label = "正位置"
-        else:
-            orientation_label = "正位置"
-    return f"《カード》：{name}（{orientation_label}）"
+        is_reversed = orientation == "reversed"
+        orientation_label = orientation_label_by_lang(is_reversed, lang_code)
+    orientation_suffix = f"（{orientation_label}）" if lang_code == "ja" else f" ({orientation_label})"
+    return f"{card_line_prefix}{name}{orientation_suffix}"
 
 
 def finalize_tarot_answer(
@@ -196,10 +206,15 @@ def format_time_axis_tarot_answer(
     drawn_cards: Sequence[dict[str, str]],
     time_range_text: str = "前後3か月",
     caution_note: str | None = None,
+    lang: str = "ja",
+    card_line_prefix: str | None = None,
+    time_scope_line: str | None = None,
 ) -> str:
     """
     Normalize a 3-card past/present/future reading into the mandated format.
     """
+    lang_code = (lang or "ja").strip().lower().replace("_", "-")
+    effective_card_line_prefix = card_line_prefix or ("《カード》：" if lang_code == "ja" else "《Card》: ")
     working = (text or "").rstrip()
     attached_caution = None
     if caution_note:
@@ -248,7 +263,16 @@ def format_time_axis_tarot_answer(
         cleaned_blocks.append(_compress_blank_lines(new_block))
 
     future_bullets = [b for b in redistributed_bullets if b][:3]
-    time_scope_line = f"{time_range_text}ほどの流れとして読みます。" if time_range_text else ""
+    if time_scope_line is None:
+        if time_range_text:
+            if lang_code == "ja":
+                time_scope_line = f"{time_range_text}ほどの流れとして読みます。"
+            elif lang_code.startswith("pt"):
+                time_scope_line = f"Lendo o fluxo de cerca de {time_range_text}."
+            else:
+                time_scope_line = f"Reading the flow over about {time_range_text}."
+        else:
+            time_scope_line = ""
     if time_scope_line:
         first_block = cleaned_blocks[0]
         if time_scope_line not in first_block:
@@ -267,7 +291,13 @@ def format_time_axis_tarot_answer(
 
     final_lines: list[str] = []
     for idx, card in enumerate(ordered_cards[:3]):
-        final_lines.append(_build_time_axis_card_line(card))
+        final_lines.append(
+            _build_time_axis_card_line(
+                card,
+                card_line_prefix=effective_card_line_prefix,
+                lang=lang_code,
+            )
+        )
         body_lines = cleaned_blocks[idx] if idx < len(cleaned_blocks) else []
         final_lines.extend(body_lines)
 

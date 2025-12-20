@@ -82,3 +82,18 @@ def test_position_labels_are_injected_into_answer():
     assert "【現在】" in formatted
     assert "【過去】" in formatted
     assert "【未来】" in formatted
+
+
+def test_tarot_prompts_are_localized_for_en():
+    messages = build_tarot_messages(
+        spread=ONE_CARD,
+        user_query="Career check",
+        drawn_cards=_build_drawn_cards(ONE_CARD),
+        theme="work",
+        lang="en",
+    )
+    system_text = "\n".join(msg["content"] for msg in messages if msg["role"] == "system")
+
+    assert "Output rules:" in system_text
+    assert "work/career" in system_text.lower()
+    assert "出力ルール" not in system_text

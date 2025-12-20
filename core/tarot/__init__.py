@@ -9,7 +9,7 @@ from .spreads import (
     CELTIC_CROSS,
     ALL_SPREADS,
 )
-from .draws import DrawnCard, draw_cards, orientation_label
+from .draws import DrawnCard, draw_cards, orientation_label, orientation_label_by_lang
 from .mode import contains_tarot_like, is_tarot_request, strip_tarot_sentences
 
 __all__ = [
@@ -29,6 +29,7 @@ __all__ = [
     "ALL_SPREADS",
     "draw_cards",
     "orientation_label",
+    "orientation_label_by_lang",
     "contains_tarot_like",
     "is_tarot_request",
     "strip_tarot_sentences",

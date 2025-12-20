@@ -18,6 +18,15 @@ def orientation_label(is_reversed: bool) -> str:
     return "逆位置" if is_reversed else "正位置"
 
 
+def orientation_label_by_lang(is_reversed: bool, lang: str | None = "ja") -> str:
+    lang_code = (lang or "ja").strip().lower().replace("_", "-")
+    if lang_code.startswith("en"):
+        return "reversed" if is_reversed else "upright"
+    if lang_code.startswith("pt"):
+        return "invertida" if is_reversed else "em pé"
+    return orientation_label(is_reversed)
+
+
 def draw_cards(spread: Spread, *, rng: random.Random | None = None) -> list[DrawnCard]:
     """Spread のポジション数だけカードをランダムに引く。"""
     if rng is None:
@@ -31,4 +40,4 @@ def draw_cards(spread: Spread, *, rng: random.Random | None = None) -> list[Draw
     return results
 
 
-__all__ = ["DrawnCard", "draw_cards", "orientation_label"]
+__all__ = ["DrawnCard", "draw_cards", "orientation_label", "orientation_label_by_lang"]
