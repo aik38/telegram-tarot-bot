@@ -940,7 +940,7 @@ async def _safe_delete_message(message: Message | None) -> None:
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except TelegramBadRequest as exc:
-        logger.info(
+        logger.warning(
             "Failed to delete status message",
             extra={
                 "mode": "cleanup",
@@ -949,6 +949,29 @@ async def _safe_delete_message(message: Message | None) -> None:
                 "reason": str(exc),
             },
         )
+        try:
+            await bot.edit_message_text(
+                text="\u200b", chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+            logger.info(
+                "Replaced status message after deletion failure",
+                extra={"mode": "cleanup", "chat_id": chat_id, "message_id": message_id},
+            )
+        except TelegramBadRequest as edit_exc:
+            logger.warning(
+                "Fallback edit failed while cleaning up status message",
+                extra={
+                    "mode": "cleanup",
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reason": str(edit_exc),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected error while editing status message during cleanup",
+                extra={"mode": "cleanup", "chat_id": chat_id, "message_id": message_id},
+            )
     except Exception:
         logger.exception(
             "Unexpected error while deleting status message",
@@ -1013,6 +1036,22 @@ def _mark_recent_handled(message: Message) -> bool:
     RECENT_HANDLED.add(key)
     RECENT_HANDLED_ORDER.append(key)
     return True
+
+
+def _should_process_message(message: Message, *, handler: str | None = None) -> bool:
+    if _mark_recent_handled(message):
+        return True
+
+    logger.info(
+        "Skipping duplicate message",
+        extra={
+            "mode": "router",
+            "chat_id": getattr(getattr(message, "chat", None), "id", None),
+            "message_id": getattr(message, "message_id", None),
+            "handler": handler or "unknown",
+        },
+    )
+    return False
 
 
 def _usage_today(now: datetime) -> datetime.date:
@@ -2078,46 +2117,18 @@ TERMS_CALLBACK_AGREE_AND_BUY = "terms:agree_and_buy"
 def get_terms_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
     support_email = get_support_email()
-    if lang_code == "ja":
-        return (
-            "利用規約（抜粋）\n"
-            "・18歳以上の自己責任で利用してください。\n"
-            "・禁止/注意テーマ（医療/診断/薬、法律/契約/紛争、投資助言、自傷/他害）は専門家へご相談ください。\n"
-            "・迷惑行為・違法行為への利用は禁止です。\n"
-            "・デジタル商品につき原則返金不可ですが、不具合時は調査のうえ返金します。\n"
-            f"・連絡先: {support_email}\n\n"
-            "購入前に上記へ同意してください。"
-        )
     return t(lang_code, "TERMS_TEXT", support_email=support_email)
 
 
 def get_support_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
     support_email = get_support_email()
-    if lang_code == "ja":
-        return (
-            "お問い合わせ窓口です。\n"
-            f"・購入者サポート: {support_email}\n"
-            "・一般問い合わせ: Telegram @akolasia_support\n"
-            "※Telegramの一般窓口では決済トラブルは扱えません。必要な場合は /paysupport をご利用ください。"
-        )
     return t(lang_code, "SUPPORT_TEXT", support_email=support_email)
 
 
 def get_pay_support_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
     support_email = get_support_email()
-    if lang_code == "ja":
-        return (
-            "決済トラブルの受付です。下記テンプレをコピーしてお知らせください。\n"
-            "購入日時: \n"
-            "商品名/SKU: \n"
-            "charge_id: （表示される場合）\n"
-            "支払方法: Stars / その他\n"
-            "スクリーンショット: あり/なし\n"
-            "確認のうえ、必要に応じて返金や付与対応を行います。\n"
-            f"連絡先: {support_email}"
-        )
     return t(lang_code, "PAY_SUPPORT_TEXT", support_email=support_email)
 
 def get_terms_prompt_before_buy(lang: str | None = "ja") -> str:
@@ -2203,6 +2214,9 @@ async def send_store_menu(message: Message) -> None:
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message) -> None:
+    if not _should_process_message(message, handler="help"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     mark_user_active(user_id)
@@ -2212,6 +2226,9 @@ async def cmd_help(message: Message) -> None:
 
 @dp.message(Command("terms"))
 async def cmd_terms(message: Message) -> None:
+    if not _should_process_message(message, handler="terms"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     mark_user_active(user_id)
@@ -2284,6 +2301,9 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
 
 @dp.message(Command("support"))
 async def cmd_support(message: Message) -> None:
+    if not _should_process_message(message, handler="support"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     mark_user_active(user_id)
@@ -2295,6 +2315,9 @@ async def cmd_support(message: Message) -> None:
 
 @dp.message(Command("paysupport"))
 async def cmd_pay_support(message: Message) -> None:
+    if not _should_process_message(message, handler="paysupport"):
+        return
+
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
     mark_user_active(message.from_user.id if message.from_user else None)
     lang = get_user_lang_or_default(message.from_user.id if message.from_user else None)
@@ -2303,6 +2326,9 @@ async def cmd_pay_support(message: Message) -> None:
 
 @dp.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
+    if not _should_process_message(message, handler="buy"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     mark_user_active(user_id)
@@ -2322,6 +2348,9 @@ async def cmd_buy(message: Message) -> None:
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message) -> None:
+    if not _should_process_message(message, handler="status"):
+        return
+
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
     mark_user_active(message.from_user.id if message.from_user else None)
     now = utcnow()
@@ -2330,6 +2359,9 @@ async def cmd_status(message: Message) -> None:
 
 @dp.message(Command("feedback"))
 async def cmd_feedback(message: Message) -> None:
+    if not _should_process_message(message, handler="feedback"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     lang = get_user_lang_or_default(user_id)
     if user_id is None:
@@ -2376,6 +2408,9 @@ async def cmd_feedback(message: Message) -> None:
 
 @dp.message(Command("read1"))
 async def cmd_read1(message: Message) -> None:
+    if not _should_process_message(message, handler="read1"):
+        return
+
     reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
     mark_user_active(message.from_user.id if message.from_user else None)
     await prompt_tarot_mode(message)
@@ -2383,6 +2418,9 @@ async def cmd_read1(message: Message) -> None:
 
 @dp.message(Command("love1"))
 async def cmd_love1(message: Message) -> None:
+    if not _should_process_message(message, handler="love1"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     set_user_mode(user_id, "tarot")
@@ -2397,6 +2435,9 @@ async def cmd_love1(message: Message) -> None:
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
+    if not _should_process_message(message, handler="start"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     reset_state_for_explicit_command(user_id)
     set_user_mode(user_id, "consult")
@@ -2416,6 +2457,9 @@ async def cmd_start(message: Message) -> None:
 
 @dp.message(Command("lang"))
 async def cmd_lang(message: Message) -> None:
+    if not _should_process_message(message, handler="lang"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     if user_id is None:
         await message.answer(t("ja", "USER_INFO_MISSING"))
@@ -2808,6 +2852,9 @@ def _build_admin_revoke_summary(user: UserRecord, product: Product, now: datetim
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
+    if not _should_process_message(message, handler="admin"):
+        return
+
     admin_id = message.from_user.id if message.from_user else None
     if not is_admin_user(admin_id):
         await message.answer("このコマンドは管理者専用です。")
@@ -2975,6 +3022,9 @@ async def cmd_admin(message: Message) -> None:
 
 @dp.message(Command("refund"))
 async def cmd_refund(message: Message) -> None:
+    if not _should_process_message(message, handler="refund"):
+        return
+
     user_id = message.from_user.id if message.from_user else None
     if not is_admin_user(user_id):
         await message.answer("このコマンドは管理者専用です。")
@@ -3436,7 +3486,7 @@ async def handle_message(message: Message) -> None:
 
     text = (message.text or "").strip()
     now = utcnow()
-    if not _mark_recent_handled(message):
+    if not _should_process_message(message, handler="router"):
         return
     if await reset_state_if_inactive(message, now=now):
         return
