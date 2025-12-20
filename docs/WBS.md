@@ -33,6 +33,8 @@
 
 ## 🚀 Launch (public + marketing) - 48h checklist
 
+- ショートラン（30〜60分での合否判定）は `docs/launch_checklist.md` 冒頭にまとめ済み。時間がない場合はまずそちらで通し確認する。
+
 - [ ] T-48h: PowerShell で `tools/sync.ps1` を実行 → `pytest -q` green をスクショ保存（失敗時は中断して修正）。
 - [ ] T-48h: `.env` 本番値（BOT_TOKEN / OPENAI_API_KEY / 管理者ID / PAYWALL）を再確認し、`PAYWALL_ENABLED` 初期状態と切替タイミングを決めて runbook にメモ。
 - [ ] T-36h: SQLite backup/restore 手順を読み上げテストし、復旧コマンドをチャンネル共有（`cp` の具体例つき）。
