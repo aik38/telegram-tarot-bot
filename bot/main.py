@@ -8,13 +8,13 @@ from collections import deque
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from time import monotonic, perf_counter
-from typing import Iterable, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Sequence
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -70,7 +70,7 @@ from core.monetization import (
     effective_pass_expires_at,
     get_user_with_default,
 )
-from core.logging import setup_logging
+from core.logging import request_id_var, setup_logging
 from core.prompts import (
     CONSULT_SYSTEM_PROMPT,
     TAROT_OUTPUT_RULES,
@@ -104,6 +104,31 @@ logger = logging.getLogger(__name__)
 dp.message.middleware(ThrottleMiddleware())
 # Callback queries are lightly throttled to absorb rapid taps without dropping the bot.
 dp.callback_query.middleware(ThrottleMiddleware(min_interval_sec=0.8, apply_to_callbacks=True))
+
+
+def _build_request_id(event: CallbackQuery | Message) -> str:
+    user_id = getattr(event.from_user, "id", None)
+    message_id = getattr(getattr(event, "message", event), "message_id", None)
+    suffix = int(monotonic() * 1000) % 1_000_000
+    return f"u{user_id or 'anon'}-m{message_id or 'na'}-{suffix}"
+
+
+class RequestIdMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[CallbackQuery | Message, dict[str, Any]], Awaitable[Any]],
+        event: CallbackQuery | Message,
+        data: dict[str, Any],
+    ) -> Any:
+        token = request_id_var.set(_build_request_id(event))
+        try:
+            return await handler(event, data)
+        finally:
+            request_id_var.reset(token)
+
+
+dp.message.middleware(RequestIdMiddleware())
+dp.callback_query.middleware(RequestIdMiddleware())
 IN_FLIGHT_USERS: set[int] = set()
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
