@@ -30,7 +30,7 @@ from aiogram.types import (
 from bot.keyboards.common import base_menu_kb
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.utils.replies import ensure_quick_menu
-from bot.utils.tarot_output import finalize_tarot_answer
+from bot.utils.tarot_output import finalize_tarot_answer, format_time_axis_tarot_answer
 from bot.utils.validators import validate_question_text
 from openai import (
     APIConnectionError,
@@ -75,11 +75,14 @@ from core.prompts import (
     CONSULT_SYSTEM_PROMPT,
     TAROT_OUTPUT_RULES,
     TAROT_FIXED_OUTPUT_FORMAT,
+    TIME_AXIS_FIXED_OUTPUT_FORMAT,
+    TIME_AXIS_TAROT_RULES,
     get_tarot_system_prompt,
     theme_instructions,
 )
 from core.tarot import (
     ONE_CARD,
+    THREE_CARD_TIME_AXIS,
     THREE_CARD_SITUATION,
     HEXAGRAM,
     CELTIC_CROSS,
@@ -1036,17 +1039,17 @@ async def prompt_status(message: Message, *, now: datetime) -> None:
 COMMAND_SPREAD_MAP: dict[str, Spread] = {
     "/love1": ONE_CARD,
     "/read1": ONE_CARD,
-    "/love3": THREE_CARD_SITUATION,
-    "/read3": THREE_CARD_SITUATION,
+    "/love3": THREE_CARD_TIME_AXIS,
+    "/read3": THREE_CARD_TIME_AXIS,
     "/hexa": HEXAGRAM,
     "/celtic": CELTIC_CROSS,
 }
 
 
-PAID_SPREAD_IDS: set[str] = {THREE_CARD_SITUATION.id, HEXAGRAM.id, CELTIC_CROSS.id}
+PAID_SPREAD_IDS: set[str] = {THREE_CARD_TIME_AXIS.id, HEXAGRAM.id, CELTIC_CROSS.id}
 
 SPREAD_TICKET_COLUMNS: dict[str, TicketColumn] = {
-    THREE_CARD_SITUATION.id: "tickets_3",
+    THREE_CARD_TIME_AXIS.id: "tickets_3",
     HEXAGRAM.id: "tickets_7",
     CELTIC_CROSS.id: "tickets_10",
 }
@@ -1422,31 +1425,44 @@ def build_tarot_messages(
     theme: str | None = None,
     action_count: int | None = None,
 ) -> list[dict[str, str]]:
-    rules = SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
+    is_time_axis = spread.id == THREE_CARD_TIME_AXIS.id
+    rules = TIME_AXIS_TAROT_RULES if is_time_axis else SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
     rules_text = "\n".join(f"- {rule}" for rule in rules)
-    tarot_system_prompt = f"{get_tarot_system_prompt(theme)}\n出力ルール:\n{rules_text}"
+    tarot_system_prompt = f"{get_tarot_system_prompt(theme, time_axis=is_time_axis)}\n出力ルール:\n{rules_text}"
     theme_focus = theme_instructions(theme)
-    if action_count is not None:
-        if action_count == 4:
-            action_count_text = (
-                "- 次の一手は必ず4個。内容が薄い場合は各項目を短くしないで具体化する。"
-            )
-        elif action_count in {2, 3}:
-            action_count_text = (
-                f"- 次の一手は必ず{action_count}個。4個は禁止。必要な要素は各項目に統合して良い。"
-            )
-        else:
-            action_count_text = "- 次の一手はシステムの指示個数を守り、必要でも4個までに抑える。"
+    if is_time_axis:
+        action_count_text = "- 箇条書きは未来パートにのみ最大3点まで。過去と現在では使わない。"
+        scope_text = "- 時間の目安が無い場合は前後3か月の流れとして触れる。"
+        format_hint = (
+            "過去・現在・未来の時間軸リーディングです。見出しや章ラベルを使わず、次の並びと改行を必ず守ってください:\n"
+            f"{TIME_AXIS_FIXED_OUTPUT_FORMAT}\n"
+            f"{action_count_text}\n"
+            f"{scope_text}\n"
+            "- カード名は各ブロックの《カード》行で必ず書く。🃏などの絵文字は禁止。\n"
+            f"- テーマ別フォーカス: {theme_focus}"
+        )
     else:
-        action_count_text = "- 次の一手は2〜3個を基本に、必要なときだけ4個まで。"
-    format_hint = (
-        "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
-        f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
-        f"{action_count_text}\n"
-        "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
-        "- カード名は「《カード》：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
-        f"- テーマ別フォーカス: {theme_focus}"
-    )
+        if action_count is not None:
+            if action_count == 4:
+                action_count_text = (
+                    "- 次の一手は必ず4個。内容が薄い場合は各項目を短くしないで具体化する。"
+                )
+            elif action_count in {2, 3}:
+                action_count_text = (
+                    f"- 次の一手は必ず{action_count}個。4個は禁止。必要な要素は各項目に統合して良い。"
+                )
+            else:
+                action_count_text = "- 次の一手はシステムの指示個数を守り、必要でも4個までに抑える。"
+        else:
+            action_count_text = "- 次の一手は2〜3個を基本に、必要なときだけ4個まで。"
+        format_hint = (
+            "必ず次の順序と改行で、見出しや絵文字を使わずに書いてください:\n"
+            f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
+            f"{action_count_text}\n"
+            "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
+            "- カード名は「《カード》：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
+            f"- テーマ別フォーカス: {theme_focus}"
+        )
 
     tarot_payload = {
         "spread_id": spread.id,
@@ -2258,20 +2274,32 @@ async def handle_tarot_reading(
                 await message.answer(error_text)
             return
 
-        formatted_answer = format_long_answer(
-            answer,
-            "tarot",
-            card_line=format_drawn_cards(drawn_payload),
-            position_labels=spread_to_use.position_labels,
-        )
-        if guidance_note:
-            formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
-        formatted_answer = append_caution_note(user_query, formatted_answer)
-        formatted_answer = finalize_tarot_answer(
-            formatted_answer,
-            card_line_prefix=CARD_LINE_PREFIX,
-            caution_note=CAUTION_NOTE,
-        )
+        if spread_to_use.id == THREE_CARD_TIME_AXIS.id:
+            base_answer = answer
+            if guidance_note:
+                base_answer = f"{base_answer}\n\n{guidance_note}"
+            base_answer = append_caution_note(user_query, base_answer)
+            formatted_answer = format_time_axis_tarot_answer(
+                base_answer,
+                drawn_cards=drawn_payload,
+                time_range_text="前後3か月",
+                caution_note=CAUTION_NOTE,
+            )
+        else:
+            formatted_answer = format_long_answer(
+                answer,
+                "tarot",
+                card_line=format_drawn_cards(drawn_payload),
+                position_labels=spread_to_use.position_labels,
+            )
+            if guidance_note:
+                formatted_answer = f"{formatted_answer}\n\n{guidance_note}"
+            formatted_answer = append_caution_note(user_query, formatted_answer)
+            formatted_answer = finalize_tarot_answer(
+                formatted_answer,
+                card_line_prefix=CARD_LINE_PREFIX,
+                caution_note=CAUTION_NOTE,
+            )
         bullet_count = sum(
             1 for line in formatted_answer.splitlines() if line.lstrip().startswith("・")
         )
