@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 import pytest
 
 from core.tarot import contains_tarot_like, is_tarot_request
+from bot.texts.i18n import t
 
 
 def import_bot_main(monkeypatch, tmp_path=None):
@@ -231,7 +232,8 @@ def test_lang_command_and_callback(monkeypatch, tmp_path):
     from core import db as core_db
 
     assert core_db.get_user_lang(300) == "pt"
-    assert any("言語設定を保存しました" in ans for ans in message.answers)
+    expected = t("pt", "LANGUAGE_SET_CONFIRMATION", language=t("pt", "LANGUAGE_OPTION_PT"))
+    assert expected in message.answers
 
 
 def test_menu_routing_by_emoji(monkeypatch, tmp_path):

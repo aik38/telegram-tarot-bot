@@ -1,4 +1,20 @@
 TEXTS = {
+    "MAX_QUESTION_CHARS": 500,
+    "EMPTY_QUESTION_TEXT": (
+        "Parece que a mensagem veio vazia. Envie uma frase com sua pergunta.\n"
+        "Ex.: “Vamos dar certo daqui para frente?”"
+    ),
+    "LONG_QUESTION_TEXT": (
+        "Parece um pouco longo. Resuma em até 500 caracteres, em uma frase.\n"
+        "Dica: inclua a situação, o que quer saber e quando."
+    ),
+    "NON_TEXT_MESSAGE_TEXT": (
+        "Envie em texto, por favor. Apenas emojis ou figurinhas não funcionam—uma frase basta."
+    ),
+    "THROTTLE_TEXT": "Por favor, espere um pouco antes de tentar de novo.",
+    "RETRY_READING_TEXT": (
+        "A resposta está demorando um pouco. Tente novamente depois de aguardar um pouco."
+    ),
     "START_TEXT": (
         "Olá, sou o tarot_cat para leituras de tarot e conversa. 🐈‍⬛\n"
         "Você pode tirar uma carta grátis até 2 vezes por dia (/read1).\n"
@@ -117,4 +133,127 @@ TEXTS = {
     "INACTIVE_RESET_NOTICE": (
         "A sessão foi reiniciada após inatividade. Comece novamente com /start ou /help."
     ),
+    "MENU_HOME_TEXT": "🏠 Voltar ao menu",
+    "MENU_TAROT_LABEL": "🎩 Tarot",
+    "MENU_CHAT_LABEL": "💬 Conversa",
+    "MENU_STORE_LABEL": "🛒 Loja",
+    "MENU_STATUS_LABEL": "📊 Status",
+    "MENU_LANGUAGE_LABEL": "🌐 Idioma",
+    "GO_TO_STORE_BUTTON": "🛒 Ir para a loja",
+    "VIEW_STATUS_BUTTON": "📊 Ver status",
+    "ASK_FOR_MORE_DETAIL": "Conte um pouco mais sobre o que está pensando, por favor.",
+    "DEFAULT_TAROT_QUERY_FALLBACK": "Faça uma leitura sobre o que estou pensando agora.",
+    "BUSY_TAROT_MESSAGE": "Uma leitura já está em andamento—aguarde um instante.",
+    "BUSY_CHAT_MESSAGE": "Estou respondendo agora—aguarde um instante.",
+    "READING_IN_PROGRESS_NOTICE": "🔮 Leitura em andamento… aguarde, por favor.",
+    "APOLOGY_RETRY_NOTE": "Desculpe o transtorno. Tente novamente depois de esperar um pouco.",
+    "USER_INFO_MISSING": "Não conseguimos confirmar suas informações de usuário.",
+    "USER_INFO_DM_REQUIRED": "Não conseguimos confirmar suas informações. Tente a partir de um chat direto, por favor.",
+    "LANGUAGE_SELECT_PROMPT": "Escolha o idioma.",
+    "LANGUAGE_OPTION_JA": "🇯🇵 Japonês",
+    "LANGUAGE_OPTION_EN": "🇺🇸 Inglês",
+    "LANGUAGE_OPTION_PT": "🇧🇷 Português",
+    "LANGUAGE_SET_CONFIRMATION": "Idioma salvo ({language}).",
+    "LANGUAGE_SET_FAILED": "Não foi possível atualizar o idioma.",
+    "MENU_RETURNED_TEXT": "Voltamos ao menu. Use os botões abaixo.",
+    "POSTPROCESS_TRUNCATION_NOTE": (
+        "A mensagem estava muito longa, então enviei a primeira parte. "
+        "Se quiser o restante, é só pedir novamente."
+    ),
+    "OPENAI_FATAL_ERROR": "Ocorreu um problema do nosso lado. Tente novamente em instantes.",
+    "OPENAI_PROCESSING_ERROR": "Houve um problema ao processar a leitura. Tente novamente em breve.",
+    "OPENAI_COMMUNICATION_ERROR": "A conexão falhou. Tente novamente depois de esperar um pouco.",
+    "SENSITIVE_TOPIC_LABEL_INVESTMENT": "Investimentos/Finanças",
+    "SENSITIVE_TOPIC_LABEL_LEGAL": "Legal/Contratos/Disputas",
+    "SENSITIVE_TOPIC_LABEL_MEDICAL": "Saúde",
+    "SENSITIVE_TOPIC_LABEL_SELF_HARM": "Autolesão/Angústia intensa",
+    "SENSITIVE_TOPIC_LABEL_VIOLENCE": "Violência/Dano a outros",
+    "SENSITIVE_TOPIC_NOTICE_HEADER": (
+        "🚫 Esses temas exigem apoio profissional, então não podemos dar leituras definitivas: {topics}."
+    ),
+    "SENSITIVE_TOPIC_NOTICE_PRO_HELP": (
+        "• Para sintomas ou problemas, consulte profissionais médicos, jurídicos ou órgãos públicos."
+    ),
+    "SENSITIVE_TOPIC_GUIDANCE_MEDICAL": (
+        "Não fazemos diagnóstico ou tratamento. Procure profissionais de saúde rapidamente se houver preocupação."
+    ),
+    "SENSITIVE_TOPIC_GUIDANCE_LEGAL": (
+        "Decisões legais e contratos devem ser analisados por um advogado."
+    ),
+    "SENSITIVE_TOPIC_GUIDANCE_INVESTMENT": (
+        "Não damos conselhos de investimento nem garantimos retornos. Planeje com profissionais financeiros."
+    ),
+    "SENSITIVE_TOPIC_GUIDANCE_SELF_HARM": (
+        "Se sentir perigo, contate emergências ou um canal de apoio imediatamente. Não enfrente isso sozinho."
+    ),
+    "SENSITIVE_TOPIC_GUIDANCE_VIOLENCE": (
+        "Se houver risco, vá para um lugar seguro e contate a polícia ou autoridades."
+    ),
+    "SENSITIVE_TOPIC_NOTICE_FOCUS": (
+        "Na leitura, focamos em organizar sentimentos e em próximos passos ou autocuidado prático."
+    ),
+    "SENSITIVE_TOPIC_NOTICE_LIST_REMINDER": "Veja /help ou /terms para a lista de temas restritos.",
+    "PRODUCT_PASS_7D_TITLE": "Passe de 7 dias",
+    "PRODUCT_PASS_7D_DESCRIPTION": "Passe de 7 dias que libera a conversa para você usar leituras ou bate-papo todos os dias.",
+    "PRODUCT_PASS_30D_TITLE": "Passe de 30 dias",
+    "PRODUCT_PASS_30D_DESCRIPTION": "Passe de 30 dias para acompanhar conversas por mais tempo, com tranquilidade.",
+    "PRODUCT_TICKET_3_TITLE": "Leitura de 3 cartas",
+    "PRODUCT_TICKET_3_DESCRIPTION": "Uma leitura de 3 cartas para organizar a situação—ideal para revisar o presente de forma simples.",
+    "PRODUCT_TICKET_7_TITLE": "Hexagrama (7 cartas)",
+    "PRODUCT_TICKET_7_DESCRIPTION": "Um hexagrama de 7 cartas para aprofundar—ótimo para acompanhar causas e fluxo.",
+    "PRODUCT_TICKET_10_TITLE": "Cruz Celta (10 cartas)",
+    "PRODUCT_TICKET_10_DESCRIPTION": "Uma Cruz Celta de 10 cartas para uma visão completa de vários ângulos.",
+    "PRODUCT_ADDON_IMAGES_TITLE": "Complemento de imagem",
+    "PRODUCT_ADDON_IMAGES_DESCRIPTION": "Ative a opção de anexar imagens às leituras.",
+    "PASS_EXTENDED_TEXT": "Validade atualizada.",
+    "UNLOCK_TICKET_ADDED": "Adicionado {product}. Saldo restante: {balance}.",
+    "UNLOCK_PASS_GRANTED": "Passe concedido: {duration}.\nValidade: {until_text}{remaining_hint}",
+    "UNLOCK_IMAGES_ENABLED": "Complemento de imagem ativado. Suas próximas leituras terão um toque visual.",
+    "PURCHASE_GENERIC_THANKS": "Obrigado pela compra. Fale com o suporte se precisar de algo.",
+    "TERMS_PROMPT_REMINDER": (
+        "Revise /terms e concorde antes de comprar.\n"
+        "Use /terms para registrar seu aceite."
+    ),
+    "TERMS_BUTTON_AGREE": "Concordar",
+    "TERMS_BUTTON_VIEW": "Ver termos",
+    "TERMS_BUTTON_AGREE_AND_BUY": "Concordar e seguir para a compra",
+    "ADDON_PENDING_LABEL": "Complemento de imagem (em breve)",
+    "TERMS_AGREED_RECORDED": "Seu aceite dos termos foi registrado. Você pode seguir com /buy.",
+    "TERMS_NEXT_STEP_REMINDER": "Após concordar, continue com /buy para comprar.",
+    "RETURN_TO_TAROT_BUTTON": "🎩 Voltar ao Tarot",
+    "ADDON_PENDING_ALERT": "O complemento de imagem está chegando em breve. Aguarde mais um pouco.",
+    "PASS_ALREADY_ACTIVE_ALERT": "Um passe está ativo, então a leitura de 3 cartas já está liberada.",
+    "PASS_ALREADY_ACTIVE_MESSAGE": "O passe está ativo—não é preciso comprar outro ticket de 3 cartas. Experimente o spread de 3 cartas em 🎩 Tarot.",
+    "PURCHASE_DEDUP_ALERT": "Uma tela de checkout já está aberta. Verifique a janela de pagamento.",
+    "PURCHASE_DEDUP_MESSAGE": "Uma confirmação para o mesmo produto está em andamento. Verifique a tela de pagamento aberta.",
+    "INVOICE_DISPLAY_FAILED": "Falha ao mostrar a tela de checkout. Tente /buy novamente.",
+    "OPENING_PAYMENT_SCREEN": "Abrindo a tela de pagamento—siga no seu tempo.",
+    "PURCHASE_THANK_YOU": "Obrigado por comprar {product}!",
+    "PURCHASE_STATUS_REMINDER": "Você também pode ver os detalhes da concessão em /status.",
+    "PURCHASE_NAVIGATION_HINT": "Use os botões abaixo para voltar ao Tarot ou ver seu status.",
+    "PAYMENT_ALREADY_PROCESSED": "Este pagamento já foi processado. Consulte /status para detalhes.",
+    "PAYMENT_INFO_MISMATCH": (
+        "Não foi possível confirmar os dados do pagamento. Fale com o suporte, por favor.\n"
+        "Se a cobrança foi concluída, resolveremos para você."
+    ),
+    "PAYMENT_VERIFICATION_DELAY": (
+        "Pagamento concluído, mas a confirmação da compra está demorando um pouco.\n"
+        "Entre em contato com o suporte se precisar."
+    ),
+    "FEEDBACK_DM_REQUIRED": "Envie o feedback a partir de um chat direto, por favor.",
+    "FEEDBACK_PROMPT": (
+        "📝 Conte sua opinião\n"
+        "\n"
+        "• O que funcionou bem\n"
+        "• O que ficou confuso\n"
+        "• Funcionalidades que gostaria de ver\n"
+        "• Impressões sobre as leituras e linguagem\n"
+        "\n"
+        "Mensagens curtas são bem-vindas. Seu retorno nos ajuda a melhorar."
+    ),
+    "FEEDBACK_SAVE_ERROR": "Não foi possível salvar o feedback. Tente novamente mais tarde.",
+    "FEEDBACK_THANKS": "Obrigado pelo feedback—vamos usá-lo para melhorar o serviço.",
+    "UNKNOWN_THEME": "Não conseguimos reconhecer o tema.",
+    "PRODUCT_INFO_MISSING": "Não foi possível confirmar as informações do produto. Comece novamente, por favor.",
+    "PURCHASER_INFO_MISSING": "Não foi possível confirmar os dados do comprador. Tente outra vez.",
 }

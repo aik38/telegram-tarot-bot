@@ -1,11 +1,14 @@
 import re
 
+from bot.texts.i18n import normalize_lang, t
+
 
 def postprocess_llm_text(
     text: str,
     *,
     soft_limit: int = 2000,
     max_length: int = 2300,
+    lang: str | None = None,
 ) -> str:
     """
     Normalize raw LLM output without changing its meaning.
@@ -24,8 +27,6 @@ def postprocess_llm_text(
         return normalized
 
     cut = normalized[:soft_limit].rstrip()
-    note = (
-        "（文章がとても長かったため途中までお届けしました。続きが必要でしたら、"
-        "もう一度聞いてくださいね。）"
-    )
+    lang_code = normalize_lang(lang)
+    note = t(lang_code, "POSTPROCESS_TRUNCATION_NOTE")
     return f"{cut}\n\n{note}"

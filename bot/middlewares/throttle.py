@@ -4,7 +4,8 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message
 
-from bot.texts.ja import THROTTLE_TEXT
+from bot.texts.i18n import normalize_lang, t
+from core.db import get_user_lang
 
 
 class ThrottleMiddleware(BaseMiddleware):
@@ -40,11 +41,21 @@ class ThrottleMiddleware(BaseMiddleware):
         return event.from_user.id if event.from_user else None
 
     async def _handle_throttled(self, event: CallbackQuery | Message) -> None:
+        lang = self._resolve_lang(event)
+        text = t(lang, "THROTTLE_TEXT")
         try:
             if isinstance(event, CallbackQuery):
-                await event.answer(THROTTLE_TEXT, show_alert=False)
+                await event.answer(text, show_alert=False)
             else:
-                await event.answer(THROTTLE_TEXT)
+                await event.answer(text)
         except Exception:
             # Avoid raising from middleware
             return
+
+    def _resolve_lang(self, event: CallbackQuery | Message) -> str:
+        user_id = self._get_user_id(event)
+        saved_lang = get_user_lang(user_id) if user_id is not None else None
+        if saved_lang:
+            return saved_lang
+        language_code = getattr(getattr(event, "from_user", None), "language_code", None)
+        return normalize_lang(language_code)

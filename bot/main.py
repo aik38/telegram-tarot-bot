@@ -117,6 +117,7 @@ from bot.texts.ja import HELP_TEXT_TEMPLATE
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
+NON_CONSULT_OUT_OF_QUOTA_MESSAGE = t("ja", "NON_CONSULT_OUT_OF_QUOTA_MESSAGE")
 
 logger = logging.getLogger(__name__)
 dp.message.middleware(ThrottleMiddleware(min_interval_sec=THROTTLE_MESSAGE_INTERVAL_SEC))
@@ -413,20 +414,6 @@ SENSITIVE_TOPICS: dict[str, list[str]] = {
         "危険",
     ],
 }
-SENSITIVE_TOPIC_LABELS: dict[str, str] = {
-    "investment": "投資・資産運用",
-    "legal": "法律・契約・紛争",
-    "medical": "医療・健康",
-    "self_harm": "自傷・強い不安",
-    "violence": "暴力・他害",
-}
-SENSITIVE_TOPIC_GUIDANCE: dict[str, str] = {
-    "medical": "診断や治療はできません。体調の変化や不安があるときは早めに医療機関へご相談ください。",
-    "legal": "法的判断や契約書の確認は弁護士などの専門家へお任せください。",
-    "investment": "投資助言や利回りの断定は行いません。資金計画は金融機関・専門家とご確認ください。",
-    "self_harm": "命の危険を感じるときは、迷わず救急や自治体・専門の相談窓口へ連絡してください。ひとりで抱え込まないでください。",
-    "violence": "危険が迫っている場合は安全な場所へ移動し、警察など公的機関へ相談してください。",
-}
 SUPPORTED_LANGS = {"ja", "en", "pt"}
 
 
@@ -517,25 +504,27 @@ def classify_sensitive_topics(text: str) -> set[str]:
     return hits
 
 
-def build_sensitive_topic_notice(topics: set[str]) -> str:
+def build_sensitive_topic_notice(topics: set[str], *, lang: str | None = "ja") -> str:
     if not topics:
         return ""
 
-    topic_labels = [SENSITIVE_TOPIC_LABELS.get(topic, topic) for topic in sorted(topics)]
+    lang_code = normalize_lang(lang)
+    topic_labels = [
+        t(lang_code, f"SENSITIVE_TOPIC_LABEL_{topic.upper()}") for topic in sorted(topics)
+    ]
     joined_labels = " / ".join(topic_labels)
     lines = [
-        f"🚫 以下のテーマは専門家への相談が必要なため、占いとして断定はできません: {joined_labels}。",
-        "・感じている症状やトラブルは、必ず医療機関・弁護士・公的機関などの専門窓口へご相談ください。",
+        t(lang_code, "SENSITIVE_TOPIC_NOTICE_HEADER", topics=joined_labels),
+        t(lang_code, "SENSITIVE_TOPIC_NOTICE_PRO_HELP"),
     ]
     for topic in sorted(topics):
-        guidance = SENSITIVE_TOPIC_GUIDANCE.get(topic)
-        if guidance:
+        guidance_key = f"SENSITIVE_TOPIC_GUIDANCE_{topic.upper()}"
+        guidance = t(lang_code, guidance_key)
+        if guidance != guidance_key:
             lines.append(f"・{guidance}")
 
-    lines.append(
-        "占いとしては、気持ちや状況の整理、日常でできそうなセルフケアや次の一歩に焦点を当てましょう。"
-    )
-    lines.append("禁止/注意テーマの一覧は /help または /terms から確認できます。")
+    lines.append(t(lang_code, "SENSITIVE_TOPIC_NOTICE_FOCUS"))
+    lines.append(t(lang_code, "SENSITIVE_TOPIC_NOTICE_LIST_REMINDER"))
     return "\n".join(lines)
 
 
@@ -547,8 +536,9 @@ async def respond_with_safety_notice(message: Message, user_query: str) -> bool:
     user_id = message.from_user.id if message.from_user else None
     reset_conversation_state(user_id)
     mark_user_active(user_id)
+    lang = get_user_lang_or_default(user_id)
     await message.answer(
-        build_sensitive_topic_notice(topics), reply_markup=build_quick_menu(user_id)
+        build_sensitive_topic_notice(topics, lang=lang), reply_markup=build_quick_menu(user_id)
     )
     return True
 
@@ -565,6 +555,8 @@ def _is_stale_query_error(error: Exception | str) -> bool:
 
 async def _safe_answer_callback(query: CallbackQuery, *args, **kwargs) -> None:
     try:
+        if not args and "text" not in kwargs:
+            kwargs["text"] = None
         await query.answer(*args, **kwargs)
     except TelegramBadRequest as exc:
         if _is_stale_query_error(exc):
@@ -968,7 +960,8 @@ async def _acquire_inflight(
     user_id: int | None,
     message: Message | None = None,
     *,
-    busy_message: str | None = "いま鑑定中です…少し待ってね。",
+    busy_message: str | None = None,
+    lang: str | None = "ja",
 ) -> Callable[[], None]:
     def _noop() -> None:
         return None
@@ -979,7 +972,8 @@ async def _acquire_inflight(
     lock = USER_REQUEST_LOCKS.setdefault(user_id, asyncio.Lock())
     already_locked = lock.locked()
     if already_locked and message:
-        reply_text = busy_message or ""
+        lang_code = normalize_lang(lang)
+        reply_text = busy_message if busy_message is not None else t(lang_code, "BUSY_TAROT_MESSAGE")
         if reply_text:
             asyncio.create_task(message.answer(reply_text))
     await lock.acquire()
@@ -1078,11 +1072,12 @@ async def _safe_answer_pre_checkout(
         )
 
 
-def _build_charge_retry_keyboard() -> InlineKeyboardMarkup:
+def _build_charge_retry_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🛒チャージへ", callback_data="nav:charge")],
-            [InlineKeyboardButton(text="📊ステータスを見る", callback_data="nav:status")],
+            [InlineKeyboardButton(text=t(lang_code, "GO_TO_STORE_BUTTON"), callback_data="nav:charge")],
+            [InlineKeyboardButton(text=t(lang_code, "VIEW_STATUS_BUTTON"), callback_data="nav:status")],
         ]
     )
 
@@ -1173,7 +1168,7 @@ async def _handle_stale_interaction(
         lang = get_user_lang_or_default(user_id)
         target = chat_id if chat_id is not None else user_id
         await bot.send_message(
-            target, t(lang, "STALE_CALLBACK_MESSAGE"), reply_markup=_build_charge_retry_keyboard()
+            target, t(lang, "STALE_CALLBACK_MESSAGE"), reply_markup=_build_charge_retry_keyboard(lang)
         )
     except Exception:
         logger.exception("Failed to notify user about stale interaction", extra={"payload": payload, "user_id": user_id})
@@ -1187,10 +1182,13 @@ def build_general_chat_messages(user_query: str, *, lang: str | None = "ja") -> 
     ]
 
 
-async def call_openai_with_retry(messages: Iterable[dict[str, str]]) -> tuple[str, bool]:
+async def call_openai_with_retry(
+    messages: Iterable[dict[str, str]], *, lang: str | None = "ja"
+) -> tuple[str, bool]:
     prepared_messages = list(messages)
     max_attempts = 3
     base_delay = 1.5
+    lang_code = normalize_lang(lang)
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -1201,12 +1199,11 @@ async def call_openai_with_retry(messages: Iterable[dict[str, str]]) -> tuple[st
                 ),
             )
             answer = completion.choices[0].message.content
-            return postprocess_llm_text(answer), False
+            return postprocess_llm_text(answer, lang=lang_code), False
         except (AuthenticationError, PermissionDeniedError, BadRequestError) as exc:
             logger.exception("Fatal OpenAI error: %s", exc)
             return (
-                "システム側の設定で問題が起きています。"
-                "少し時間をおいて、もう一度試してもらえますか？",
+                t(lang_code, "OPENAI_FATAL_ERROR"),
                 True,
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
@@ -1232,8 +1229,7 @@ async def call_openai_with_retry(messages: Iterable[dict[str, str]]) -> tuple[st
                 pass
             else:
                 return (
-                    "占いの処理で問題が発生しました。"
-                    "少し時間をおいて、もう一度試していただけるとうれしいです。",
+                    t(lang_code, "OPENAI_PROCESSING_ERROR"),
                     True,
                 )
 
@@ -1241,11 +1237,7 @@ async def call_openai_with_retry(messages: Iterable[dict[str, str]]) -> tuple[st
         delay += random.uniform(0, 0.5)
         await asyncio.sleep(delay)
 
-    return (
-        "通信がうまくいかなかったみたいです。"
-        "少し時間をおいて、もう一度試してもらえますか？",
-        False,
-    )
+    return t(lang_code, "OPENAI_COMMUNICATION_ERROR"), False
 
 
 def _preview_text(text: str, limit: int = 80) -> str:
@@ -1254,12 +1246,13 @@ def _preview_text(text: str, limit: int = 80) -> str:
     return text[:limit] + "..."
 
 
-def build_lang_keyboard() -> InlineKeyboardMarkup:
+def build_lang_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="日本語", callback_data="lang:set:ja")],
-            [InlineKeyboardButton(text="English", callback_data="lang:set:en")],
-            [InlineKeyboardButton(text="Português", callback_data="lang:set:pt")],
+            [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_JA"), callback_data="lang:set:ja")],
+            [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_EN"), callback_data="lang:set:en")],
+            [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_PT"), callback_data="lang:set:pt")],
         ]
     )
 
@@ -1279,26 +1272,23 @@ def _extract_start_payload(message: Message) -> str | None:
     return None
 
 
-def resolve_user_lang(message: Message) -> str:
+def resolve_user_lang(message: Message) -> tuple[str, bool]:
     user_id = message.from_user.id if message.from_user else None
     payload_lang = _extract_start_payload(message)
     if payload_lang:
         if user_id is not None:
             set_user_lang(user_id, payload_lang)
-        return payload_lang
+        return payload_lang, True
 
     saved_lang = get_user_lang(user_id) if user_id is not None else None
     if saved_lang:
-        return saved_lang
+        return saved_lang, True
 
     telegram_lang = None
     if message.from_user and getattr(message.from_user, "language_code", None):
         telegram_lang = normalize_lang(message.from_user.language_code)
 
-    lang = telegram_lang or "ja"
-    if user_id is not None:
-        set_user_lang(user_id, lang)
-    return lang
+    return telegram_lang or "ja", False
 
 
 def get_user_lang_or_default(user_id: int | None) -> str:
@@ -1477,7 +1467,7 @@ async def prompt_status(message: Message, *, now: datetime) -> None:
     lang = get_user_lang_or_default(user_id)
     if user_id is None:
         await message.answer(
-            "ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。",
+            t(lang, "USER_INFO_DM_REQUIRED"),
             reply_markup=build_base_menu(user_id),
         )
         return
@@ -1739,10 +1729,7 @@ def format_status(user: UserRecord, *, now: datetime | None = None, lang: str | 
     now = now or utcnow()
     pass_until = effective_pass_expires_at(user.user_id, user, now)
     has_pass = effective_has_pass(user.user_id, user, now=now)
-    status_title = t(lang_code, "STATUS_MODE_PROMPT")
     admin_mode = is_admin_user(user.user_id)
-    if admin_mode:
-        status_title = "📊現在のご利用状況（管理者モード）です。"
     trial_days_left = _general_chat_trial_days_left(user, now)
     trial_day = _trial_day_number(user, now)
     general_remaining = max(
@@ -1754,50 +1741,6 @@ def format_status(user: UserRecord, *, now: datetime | None = None, lang: str | 
         else FREE_ONE_ORACLE_POST_TRIAL_PER_DAY
     )
     one_remaining = max(one_oracle_limit - user.one_oracle_count_today, 0)
-
-    general_line: str
-    if has_pass:
-        general_line = "パス有効中：相談チャットは回数無制限でご利用いただけます。"
-    elif trial_days_left > 0:
-        general_line = (
-            f"trialあと{trial_days_left}日（今日の残り {general_remaining} 通）"
-            "\n・6日目以降はパス限定になります。"
-        )
-    else:
-        general_line = "パス未購入のため相談チャットは利用できません。/buy でご検討ください。"
-
-    pass_label: str
-    if pass_until:
-        remaining_days = (_usage_today(pass_until) - _usage_today(now)).days
-        remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
-        pass_label = f"{pass_until.astimezone(USAGE_TIMEZONE).strftime('%Y-%m-%d %H:%M JST')} {remaining_hint}"
-        if admin_mode:
-            pass_label = f"{pass_label}（管理者）"
-    else:
-        pass_label = "なし"
-
-    if lang_code == "ja":
-        lines = [
-            status_title,
-            f"・trial: 初回利用から{trial_day}日目",
-            f"・パス有効期限: {pass_label}",
-            f"・ワンオラクル無料枠: 1日{one_oracle_limit}回（本日の残り {one_remaining} 回）",
-            f"・相談チャット: {general_line}",
-            f"・3枚チケット: {user.tickets_3}枚",
-            f"・7枚チケット: {user.tickets_7}枚",
-            f"・10枚チケット: {user.tickets_10}枚",
-            f"・画像オプション: {'有効' if user.images_enabled else '無効'}",
-            f"・無料枠/カウントの次回リセット: {format_next_reset(now)}",
-        ]
-        latest_payment = get_latest_payment(user.user_id)
-        if latest_payment:
-            product = get_product(latest_payment.sku)
-            label = product.title if product else latest_payment.sku
-            purchased_at = latest_payment.created_at.astimezone(USAGE_TIMEZONE).strftime("%Y-%m-%d %H:%M JST")
-            lines.append(f"・直近の購入: {label} / SKU: {latest_payment.sku}（付与: {purchased_at}）")
-        if admin_mode:
-            lines.insert(1, "・管理者権限: あり（課金の制限を受けません）")
-        return "\n".join(lines)
 
     status_title = t(lang_code, "STATUS_TITLE_ADMIN" if admin_mode else "STATUS_TITLE")
     general_line_localized: str
@@ -1871,33 +1814,42 @@ def format_status(user: UserRecord, *, now: datetime | None = None, lang: str | 
     return "\n".join(lines)
 
 
-def build_unlock_text(product: Product, user: UserRecord) -> str:
+def build_unlock_text(product: Product, user: UserRecord, *, lang: str | None = "ja") -> str:
     now = utcnow()
+    lang_code = normalize_lang(lang)
+    title = _get_product_title(product, lang_code)
     if product.sku in TICKET_SKU_TO_COLUMN:
         column = TICKET_SKU_TO_COLUMN[product.sku]
         balance = getattr(user, column)
-        return f"{product.title}を追加しました。現在の残り枚数は {balance} 枚です。"
+        return t(lang_code, "UNLOCK_TICKET_ADDED", product=title, balance=balance)
 
     if product.sku.startswith("PASS_"):
         until = user.premium_until or user.pass_until
-        duration = "7日パス" if product.sku == "PASS_7D" else "30日パス"
+        duration = title
         if until:
             until_local = until.astimezone(USAGE_TIMEZONE)
             remaining_days = (_usage_today(until) - _usage_today(now)).days
-            remaining_hint = f"（あと{remaining_days}日）" if remaining_days >= 0 else ""
+            remaining_hint = (
+                t(lang_code, "STATUS_PASS_REMAINING", remaining_days=remaining_days)
+                if remaining_days >= 0
+                else ""
+            )
             until_text = until_local.strftime("%Y-%m-%d %H:%M JST")
         else:
-            until_text = "有効期限を更新しました。"
+            until_text = t(lang_code, "PASS_EXTENDED_TEXT")
             remaining_hint = ""
-        return (
-            f"{duration}を付与しました。\n"
-            f"有効期限: {until_text}{remaining_hint}"
+        return t(
+            lang_code,
+            "UNLOCK_PASS_GRANTED",
+            duration=duration,
+            until_text=until_text,
+            remaining_hint=remaining_hint,
         )
 
     if product.sku == "ADDON_IMAGES":
-        return "画像付きのオプションを有効化しました。これからの占いにやさしい彩りを添えますね。"
+        return t(lang_code, "UNLOCK_IMAGES_ENABLED")
 
-    return "ご購入ありがとうございます。必要に応じてサポートまでお知らせください。"
+    return t(lang_code, "PURCHASE_GENERIC_THANKS")
 
 
 def build_tarot_messages(
@@ -2085,7 +2037,7 @@ async def rewrite_chat_response(original: str, *, lang: str | None = "ja") -> tu
         {"role": "user", "content": original},
     ]
 
-    return await call_openai_with_retry(messages)
+    return await call_openai_with_retry(messages, lang=lang)
 
 
 async def ensure_general_chat_safety(
@@ -2168,56 +2120,42 @@ def get_pay_support_text(lang: str | None = "ja") -> str:
         )
     return t(lang_code, "PAY_SUPPORT_TEXT", support_email=support_email)
 
-TERMS_PROMPT_BEFORE_BUY = "購入前に /terms を確認し、同意の上でお進みください。"
-
-
 def get_terms_prompt_before_buy(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
-    if lang_code == "ja":
-        return TERMS_PROMPT_BEFORE_BUY
     return t(lang_code, "TERMS_PROMPT_BEFORE_BUY")
 
 
-def build_terms_keyboard(include_buy_option: bool = False) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)]]
-    )
+def build_terms_keyboard(include_buy_option: bool = False, *, lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
+    rows = [[InlineKeyboardButton(text=t(lang_code, "TERMS_BUTTON_AGREE"), callback_data=TERMS_CALLBACK_AGREE)]]
+    if include_buy_option:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang_code, "TERMS_BUTTON_AGREE_AND_BUY"), callback_data=TERMS_CALLBACK_AGREE_AND_BUY)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_terms_prompt_keyboard() -> InlineKeyboardMarkup:
+def build_terms_prompt_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="利用規約を確認", callback_data=TERMS_CALLBACK_SHOW)],
-            [InlineKeyboardButton(text="同意する", callback_data=TERMS_CALLBACK_AGREE)],
-            [InlineKeyboardButton(text="同意して購入へ進む", callback_data=TERMS_CALLBACK_AGREE_AND_BUY)],
+            [InlineKeyboardButton(text=t(lang_code, "TERMS_BUTTON_VIEW"), callback_data=TERMS_CALLBACK_SHOW)],
+            [InlineKeyboardButton(text=t(lang_code, "TERMS_BUTTON_AGREE"), callback_data=TERMS_CALLBACK_AGREE)],
+            [
+                InlineKeyboardButton(
+                    text=t(lang_code, "TERMS_BUTTON_AGREE_AND_BUY"), callback_data=TERMS_CALLBACK_AGREE_AND_BUY
+                )
+            ],
         ]
     )
 
 
-STORE_PRODUCT_LABELS: dict[str, dict[str, str]] = {
-    "en": {
-        "PASS_7D": "7-day Pass",
-        "PASS_30D": "30-day Pass",
-        "TICKET_3": "3-card Spread",
-        "TICKET_7": "Hexagram (7 cards)",
-        "TICKET_10": "Celtic Cross (10 cards)",
-        "ADDON_IMAGES": "Image add-on",
-    },
-    "pt": {
-        "PASS_7D": "Passe de 7 dias",
-        "PASS_30D": "Passe de 30 dias",
-        "TICKET_3": "Leitura de 3 cartas",
-        "TICKET_7": "Hexagrama (7 cartas)",
-        "TICKET_10": "Cruz Celta (10 cartas)",
-        "ADDON_IMAGES": "Complemento de imagem",
-    },
-}
-
-
 def _get_product_title(product: Product, lang: str) -> str:
-    if lang == "ja":
-        return product.title
-    return STORE_PRODUCT_LABELS.get(lang, {}).get(product.sku, product.title)
+    return t(lang, f"PRODUCT_{product.sku}_TITLE")
+
+
+def _get_product_description(product: Product, lang: str) -> str:
+    return t(lang, f"PRODUCT_{product.sku}_DESCRIPTION")
 
 
 def build_store_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
@@ -2228,7 +2166,7 @@ def build_store_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="画像追加オプション（準備中）",
+                        text=t(lang_code, "ADDON_PENDING_LABEL"),
                         callback_data="addon:pending",
                     )
                 ]
@@ -2245,11 +2183,12 @@ def build_store_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_purchase_followup_keyboard() -> InlineKeyboardMarkup:
+def build_purchase_followup_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
+    lang_code = normalize_lang(lang)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🎩占いに戻る", callback_data="nav:menu")],
-            [InlineKeyboardButton(text="📊ステータスを見る", callback_data="nav:status")],
+            [InlineKeyboardButton(text=t(lang_code, "RETURN_TO_TAROT_BUTTON"), callback_data="nav:menu")],
+            [InlineKeyboardButton(text=t(lang_code, "VIEW_STATUS_BUTTON"), callback_data="nav:status")],
         ]
     )
 
@@ -2284,22 +2223,23 @@ async def cmd_terms(message: Message) -> None:
     if len(parts) > 1 and parts[1].strip().lower() == "agree" and user_id is not None:
         set_terms_accepted(user_id)
         await message.answer(
-            "利用規約への同意を記録しました。/buy からご購入いただけます。",
+            t(lang, "TERMS_AGREED_RECORDED"),
             reply_markup=build_quick_menu(user_id),
         )
         return
 
-    await message.answer(get_terms_text(lang=lang), reply_markup=build_terms_keyboard())
-    await message.answer("同意後は /buy から購入に進めます。", reply_markup=build_quick_menu(user_id))
+    await message.answer(get_terms_text(lang=lang), reply_markup=build_terms_keyboard(lang=lang))
+    await message.answer(t(lang, "TERMS_NEXT_STEP_REMINDER"), reply_markup=build_quick_menu(user_id))
 
 
 @dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
 async def handle_terms_show(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
+    lang = get_user_lang_or_default(query.from_user.id if query.from_user else None)
     if query.message:
         await query.message.answer(
-            get_terms_text(lang=get_user_lang_or_default(query.from_user.id if query.from_user else None)),
-            reply_markup=build_terms_prompt_keyboard()
+            get_terms_text(lang=lang),
+            reply_markup=build_terms_prompt_keyboard(lang=lang)
         )
 
 
@@ -2307,15 +2247,16 @@ async def handle_terms_show(query: CallbackQuery):
 async def handle_terms_agree(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
+    lang = get_user_lang_or_default(user_id)
     if user_id is None:
-        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
+        await _safe_answer_callback(query, t(lang, "USER_INFO_MISSING"), show_alert=True)
         return
 
     set_terms_accepted(user_id)
-    await _safe_answer_callback(query, "同意を記録しました。", show_alert=True)
+    await _safe_answer_callback(query, t(lang, "TERMS_AGREED_RECORDED"), show_alert=True)
     if query.message:
         await query.message.answer(
-            "利用規約への同意を記録しました。/buy から購入手続きに進めます。",
+            t(lang, "TERMS_AGREED_RECORDED"),
             reply_markup=build_quick_menu(user_id),
         )
 
@@ -2324,13 +2265,13 @@ async def handle_terms_agree(query: CallbackQuery):
 async def handle_terms_agree_and_buy(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
+    lang = get_user_lang_or_default(user_id)
     if user_id is None:
-        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
+        await _safe_answer_callback(query, t(lang, "USER_INFO_MISSING"), show_alert=True)
         return
 
     set_terms_accepted(user_id)
-    await _safe_answer_callback(query, "同意を記録しました。", show_alert=True)
-    lang = get_user_lang_or_default(user_id)
+    await _safe_answer_callback(query, t(lang, "TERMS_AGREED_RECORDED"), show_alert=True)
     if query.message:
         await send_store_menu(query.message)
     else:
@@ -2369,14 +2310,10 @@ async def cmd_buy(message: Message) -> None:
     if user_id is not None:
         ensure_user(user_id)
         if not has_accepted_terms(user_id):
-            followup = (
-                f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。"
-                if normalize_lang(lang) == "ja"
-                else t(normalize_lang(lang), "TERMS_PROMPT_FOLLOWUP")
-            )
+            followup = t(lang, "TERMS_PROMPT_REMINDER")
             await message.answer(
                 followup,
-                reply_markup=build_terms_prompt_keyboard(),
+                reply_markup=build_terms_prompt_keyboard(lang=lang),
             )
             return
 
@@ -2394,8 +2331,9 @@ async def cmd_status(message: Message) -> None:
 @dp.message(Command("feedback"))
 async def cmd_feedback(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
     if user_id is None:
-        await message.answer("個別チャットからフィードバックをお送りください。")
+        await message.answer(t(lang, "FEEDBACK_DM_REQUIRED"))
         return
     reset_state_for_explicit_command(user_id)
     mark_user_active(user_id)
@@ -2404,15 +2342,7 @@ async def cmd_feedback(message: Message) -> None:
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
-            "📝 ご意見・ご感想をお聞かせください\n"
-            "\n"
-            "・使ってみて良かった点\n"
-            "・わかりにくかったところ\n"
-            "・こんな機能があったら嬉しい\n"
-            "・占い結果や表現の印象\n"
-            "\n"
-            "など、短くても大丈夫です。\n"
-            "いただいた内容は、今後の改善の参考にします。",
+            t(lang, "FEEDBACK_PROMPT"),
             reply_markup=menu,
         )
         return
@@ -2434,13 +2364,13 @@ async def cmd_feedback(message: Message) -> None:
     except Exception:
         logger.exception("Failed to record feedback", extra={"user_id": user_id})
         await message.answer(
-            "フィードバックの保存中に問題が起きました。お手数ですが後ほどお試しください。",
+            t(lang, "FEEDBACK_SAVE_ERROR"),
             reply_markup=menu,
         )
         return
 
     await message.answer(
-        "フィードバックありがとうございます。運用改善に活かします。", reply_markup=menu
+        t(lang, "FEEDBACK_THANKS"), reply_markup=menu
     )
 
 
@@ -2472,7 +2402,15 @@ async def cmd_start(message: Message) -> None:
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
     mark_user_active(user_id)
-    lang = resolve_user_lang(message)
+    lang, is_persisted = resolve_user_lang(message)
+    if not is_persisted:
+        prompt = f"{t(lang, 'LANGUAGE_SELECT_PROMPT')}\n\n{get_start_text(lang=lang)}"
+        await message.answer(
+            prompt,
+            reply_markup=build_lang_keyboard(lang=lang),
+        )
+        return
+
     await message.answer(get_start_text(lang=lang), reply_markup=base_menu_kb(lang=lang))
 
 
@@ -2480,11 +2418,12 @@ async def cmd_start(message: Message) -> None:
 async def cmd_lang(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     if user_id is None:
-        await message.answer("ユーザー情報を確認できませんでした。")
+        await message.answer(t("ja", "USER_INFO_MISSING"))
         return
+    lang = get_user_lang_or_default(user_id)
     await message.answer(
-        "言語を選択してください（表示は日本語のままです）。",
-        reply_markup=build_lang_keyboard(),
+        t(lang, "LANGUAGE_SELECT_PROMPT"),
+        reply_markup=build_lang_keyboard(lang=lang),
     )
 
 
@@ -2498,7 +2437,7 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     if query.message:
         await query.message.answer(
-            "メニューに戻りました。下のボタンから選んでください。",
+            t(get_user_lang_or_default(user_id), "MENU_RETURNED_TEXT"),
             reply_markup=build_base_menu(user_id),
         )
 
@@ -2513,15 +2452,28 @@ async def handle_lang_set(query: CallbackQuery) -> None:
 
     if normalized not in SUPPORTED_LANGS or user_id is None:
         if query.message:
-            await query.message.answer("言語を設定できませんでした。")
+            await query.message.answer(t("ja", "LANGUAGE_SET_FAILED"))
         return
 
     set_user_lang(user_id, normalized)
-    confirmation = f"言語設定を保存しました（{normalized}）。"
+    set_user_mode(user_id, "consult")
+    reset_tarot_state(user_id)
+    mark_user_active(user_id)
+    lang_label_map = {
+        "ja": t("ja", "LANGUAGE_OPTION_JA"),
+        "en": t("en", "LANGUAGE_OPTION_EN"),
+        "pt": t("pt", "LANGUAGE_OPTION_PT"),
+    }
+    lang_label = lang_label_map.get(normalized, normalized)
+    confirmation = t(normalized, "LANGUAGE_SET_CONFIRMATION", language=lang_label)
+    reply_markup = base_menu_kb(lang=normalized)
+    start_text = get_start_text(lang=normalized)
     if query.message:
-        await query.message.answer(confirmation, reply_markup=base_menu_kb(lang=normalized))
+        await query.message.answer(confirmation, reply_markup=reply_markup)
+        await query.message.answer(start_text, reply_markup=reply_markup)
     else:
-        await bot.send_message(user_id, confirmation, reply_markup=base_menu_kb(lang=normalized))
+        await bot.send_message(user_id, confirmation, reply_markup=reply_markup)
+        await bot.send_message(user_id, start_text, reply_markup=reply_markup)
 
 
 @dp.callback_query(F.data == "nav:status")
@@ -2529,7 +2481,7 @@ async def handle_nav_status(query: CallbackQuery, state: FSMContext) -> None:
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
     if user_id is None:
-        await _safe_answer_callback(query, "ユーザー情報を確認できませんでした。", show_alert=True)
+        await _safe_answer_callback(query, t("ja", "USER_INFO_MISSING"), show_alert=True)
         return
     await state.clear()
     set_user_mode(user_id, "status")
@@ -2594,21 +2546,17 @@ async def handle_buy_callback(query: CallbackQuery):
     )
     if product.sku == "ADDON_IMAGES" and not IMAGE_ADDON_ENABLED:
         await _safe_answer_callback(
-            query, "画像追加オプションは準備中です。リリースまでお待ちください。", show_alert=True
+            query, t(lang, "ADDON_PENDING_ALERT"), show_alert=True
         )
         return
     if not has_accepted_terms(user_id):
         terms_prompt = get_terms_prompt_before_buy(lang)
         await _safe_answer_callback(query, terms_prompt, show_alert=True)
         if query.message:
-            followup = (
-                f"{TERMS_PROMPT_BEFORE_BUY}\n/terms から同意をお願いします。"
-                if normalize_lang(lang) == "ja"
-                else t(normalize_lang(lang), "TERMS_PROMPT_FOLLOWUP")
-            )
+            followup = t(lang, "TERMS_PROMPT_REMINDER")
             await query.message.answer(
                 followup,
-                reply_markup=build_terms_prompt_keyboard(),
+                reply_markup=build_terms_prompt_keyboard(lang=lang),
             )
         return
 
@@ -2617,12 +2565,12 @@ async def handle_buy_callback(query: CallbackQuery):
         if has_pass:
             await _safe_answer_callback(
                 query,
-                "パスが有効なため、3枚スプレッドは追加購入なしでお使いいただけます。",
+                t(lang, "PASS_ALREADY_ACTIVE_ALERT"),
                 show_alert=True,
             )
             if query.message:
                 await query.message.answer(
-                    "パスが有効なので、追加のスリーカード購入は不要です。🎩占いから3枚スプレッドをお試しください。",
+                    t(lang, "PASS_ALREADY_ACTIVE_MESSAGE"),
                     reply_markup=build_base_menu(user_id),
                 )
             return
@@ -2633,23 +2581,25 @@ async def handle_buy_callback(query: CallbackQuery):
         )
         await _safe_answer_callback(
             query,
-            "購入画面は既に表示しています。開いている決済画面をご確認ください。",
+            t(lang, "PURCHASE_DEDUP_ALERT"),
             show_alert=True,
         )
         if query.message:
             await query.message.answer(
-                "同じ商品への購入確認を進行中です。開いている購入画面を確認してください。",
+                t(lang, "PURCHASE_DEDUP_MESSAGE"),
                 reply_markup=build_base_menu(user_id),
             )
         return
     payload = json.dumps({"sku": product.sku, "user_id": user_id})
-    prices = [LabeledPrice(label=product.title, amount=product.price_stars)]
+    title_localized = _get_product_title(product, lang)
+    description_localized = _get_product_description(product, lang)
+    prices = [LabeledPrice(label=title_localized, amount=product.price_stars)]
 
     if query.message:
         try:
             await query.message.answer_invoice(
-                title=product.title,
-                description=product.description,
+                title=title_localized,
+                description=description_localized,
                 payload=payload,
                 provider_token="",
                 currency="XTR",
@@ -2666,17 +2616,18 @@ async def handle_buy_callback(query: CallbackQuery):
                 extra={"user_id": user_id, "sku": product.sku, "error": str(exc)},
             )
             await query.message.answer(
-                "決済画面の表示に失敗しました。/buy からもう一度お試しください。",
-                reply_markup=_build_charge_retry_keyboard(),
+                t(lang, "INVOICE_DISPLAY_FAILED"),
+                reply_markup=_build_charge_retry_keyboard(lang),
             )
             return
-    await _safe_answer_callback(query, "お支払い画面を開きます。ゆっくり進めてくださいね。")
+    await _safe_answer_callback(query, t(lang, "OPENING_PAYMENT_SCREEN"))
 
 
 @dp.callback_query(F.data == "addon:pending")
 async def handle_addon_pending(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
-    await _safe_answer_callback(query, "画像追加オプションは準備中です。もう少しお待ちください。", show_alert=True)
+    lang = get_user_lang_or_default(query.from_user.id if query.from_user else None)
+    await _safe_answer_callback(query, t(lang, "ADDON_PENDING_ALERT"), show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("tarot_theme:"))
@@ -2687,7 +2638,8 @@ async def handle_tarot_theme_select(query: CallbackQuery):
     user_id = query.from_user.id if query.from_user else None
     mark_user_active(user_id)
     if theme not in {"love", "marriage", "work", "life"}:
-        await _safe_answer_callback(query, "テーマを認識できませんでした。", show_alert=True)
+        lang = get_user_lang_or_default(user_id)
+        await _safe_answer_callback(query, t(lang, "UNKNOWN_THEME"), show_alert=True)
         return
 
     set_user_mode(user_id, "tarot")
@@ -2720,6 +2672,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     product = get_product(sku) if sku else None
     user_id = pre_checkout_query.from_user.id if pre_checkout_query.from_user else None
     log_user_id = user_id or payload_user_id
+    lang = get_user_lang_or_default(log_user_id)
     if not product:
         _safe_log_payment_event(
             user_id=log_user_id,
@@ -2734,7 +2687,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
         await _safe_answer_pre_checkout(
             pre_checkout_query,
             ok=False,
-            error_message="商品情報を確認できませんでした。最初からお試しください。",
+            error_message=t(lang, "PRODUCT_INFO_MISSING"),
         )
         return
     if payload_user_id is None or user_id is None or payload_user_id != user_id:
@@ -2747,7 +2700,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
         await _safe_answer_pre_checkout(
             pre_checkout_query,
             ok=False,
-            error_message="購入者情報を確認できませんでした。もう一度お試しください。",
+            error_message=t(lang, "PURCHASER_INFO_MISSING"),
         )
         return
 
@@ -2768,17 +2721,17 @@ async def process_successful_payment(message: Message):
     product = get_product(sku) if sku else None
     user_id_message = message.from_user.id if message.from_user else None
     user_id = payload_user_id if payload_user_id is not None else user_id_message
+    lang = get_user_lang_or_default(user_id)
+    lang_code = normalize_lang(lang)
     if user_id_message is not None and user_id is not None and user_id != user_id_message:
         await message.answer(
-            "お支払い情報の確認に失敗しました。サポートまでお問い合わせください。\n"
-            "処理は完了している場合がありますので、ご安心ください。"
+            t(lang_code, "PAYMENT_INFO_MISMATCH")
         )
         return
 
     if not product or user_id is None:
         await message.answer(
-            "お支払いは完了しましたが、購入情報の確認に少し時間がかかっています。\n"
-            "お手数ですがサポートまでお問い合わせください。"
+            t(lang_code, "PAYMENT_VERIFICATION_DELAY")
         )
         return
 
@@ -2798,19 +2751,22 @@ async def process_successful_payment(message: Message):
     )
     if not created:
         await message.answer(
-            "このお支払いはすでに処理済みです。/status から利用状況をご確認ください。",
-            reply_markup=build_purchase_followup_keyboard(),
+            t(lang_code, "PAYMENT_ALREADY_PROCESSED"),
+            reply_markup=build_purchase_followup_keyboard(lang=lang_code),
         )
         return
     updated_user = grant_purchase(user_id, product.sku)
-    unlock_message = build_unlock_text(product, updated_user)
+    unlock_message = build_unlock_text(product, updated_user, lang=lang_code)
+    title_localized = _get_product_title(product, lang_code)
     thank_you_lines = [
-        f"{product.title}のご購入ありがとうございました！",
+        t(lang_code, "PURCHASE_THANK_YOU", product=title_localized),
         unlock_message,
-        "付与内容は /status でも確認できます。",
-        "下のボタンから占いに戻るか、ステータスを確認してください。",
+        t(lang_code, "PURCHASE_STATUS_REMINDER"),
+        t(lang_code, "PURCHASE_NAVIGATION_HINT"),
     ]
-    await message.answer("\n".join(thank_you_lines), reply_markup=build_purchase_followup_keyboard())
+    await message.answer(
+        "\n".join(thank_you_lines), reply_markup=build_purchase_followup_keyboard(lang=lang_code)
+    )
 
 
 def _build_admin_grant_summary(user: UserRecord, product: Product, now: datetime) -> str:
@@ -3078,7 +3034,7 @@ async def handle_tarot_reading(
     lang_code = normalize_lang(lang)
     chat_id = get_chat_id(message)
     can_use_bot = hasattr(message, "chat") and getattr(message.chat, "id", None) is not None
-    release_inflight = await _acquire_inflight(user_id, message)
+    release_inflight = await _acquire_inflight(user_id, message, lang=lang_code)
     event_success = False
     event_error: str | None = None
 
@@ -3132,16 +3088,20 @@ async def handle_tarot_reading(
     status_message: Message | None = None
     try:
         status_message = await message.answer(
-            "🔮鑑定中です…（しばらくお待ちください）",
+            t(lang_code, "READING_IN_PROGRESS_NOTICE"),
             reply_markup=build_quick_menu(user_id),
         )
         openai_start = perf_counter()
-        answer, fatal = await call_openai_with_retry(messages)
+        try:
+            answer, fatal = await call_openai_with_retry(messages, lang=lang_code)
+        except TypeError:
+            answer, fatal = await call_openai_with_retry(messages)
         openai_latency_ms = (perf_counter() - openai_start) * 1000
         if fatal:
             error_text = (
                 answer
-                + "\n\nご不便をおかけしてごめんなさい。時間をおいて再度お試しください。"
+                + "\n\n"
+                + t(lang_code, "APOLOGY_RETRY_NOTE")
             )
             if can_use_bot and chat_id is not None:
                 await send_long_text(
@@ -3371,12 +3331,19 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     )
 
     release_inflight = await _acquire_inflight(
-        user_id, message, busy_message="いま返信中です…少し待ってね。"
+        user_id, message, busy_message=t(lang, "BUSY_CHAT_MESSAGE"), lang=lang
     )
 
     try:
         openai_start = perf_counter()
-        answer, fatal = await call_openai_with_retry(build_general_chat_messages(user_query, lang=lang))
+        try:
+            answer, fatal = await call_openai_with_retry(
+                build_general_chat_messages(user_query, lang=lang), lang=lang
+            )
+        except TypeError:
+            answer, fatal = await call_openai_with_retry(
+                build_general_chat_messages(user_query, lang=lang)
+            )
         openai_latency_ms = (perf_counter() - openai_start) * 1000
         if fatal:
             error_text = (
@@ -3458,10 +3425,11 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
 )
 async def handle_message(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
     content_type = getattr(message, "content_type", ContentType.TEXT)
     is_text = content_type == ContentType.TEXT
     if not is_text:
-        ok, error_message = validate_question_text(None, is_text=False)
+        ok, error_message = validate_question_text(None, is_text=False, lang=lang)
         if not ok and error_message:
             await message.answer(error_message, reply_markup=build_base_menu(user_id))
         return
@@ -3497,7 +3465,7 @@ async def handle_message(message: Message) -> None:
 
     if not text:
         await message.answer(
-            "気になることをもう少し詳しく教えてくれるとうれしいです。",
+            t(lang, "ASK_FOR_MORE_DETAIL"),
             reply_markup=menu_markup,
         )
         return
@@ -3518,13 +3486,17 @@ async def handle_message(message: Message) -> None:
         await prompt_status(message, now=now)
         return
 
+    if text.startswith("🌐"):
+        await cmd_lang(message)
+        return
+
     spread_from_command, cleaned = parse_spread_command(text)
 
     if spread_from_command:
         set_user_mode(user_id, "tarot")
         if text.lower().startswith("/love1"):
             set_tarot_theme(user_id, "love")
-        user_query = cleaned or "今気になっていることについて占ってください。"
+        user_query = cleaned or t(lang, "DEFAULT_TAROT_QUERY_FALLBACK")
         await execute_tarot_request(
             message,
             user_query=user_query,
@@ -3540,7 +3512,7 @@ async def handle_message(message: Message) -> None:
         return
 
     if tarot_flow == "awaiting_question":
-        ok, error_message = validate_question_text(text, is_text=is_text)
+        ok, error_message = validate_question_text(text, is_text=is_text, lang=lang)
         if not ok and error_message:
             await message.answer(error_message, reply_markup=quick_menu)
             return
@@ -3554,7 +3526,7 @@ async def handle_message(message: Message) -> None:
         return
 
     if user_mode == "tarot" or is_tarot_request(text):
-        ok, error_message = validate_question_text(text, is_text=is_text)
+        ok, error_message = validate_question_text(text, is_text=is_text, lang=lang)
         if not ok and error_message:
             await message.answer(error_message, reply_markup=quick_menu)
             return
@@ -3567,7 +3539,7 @@ async def handle_message(message: Message) -> None:
         )
         return
 
-    ok, error_message = validate_question_text(text, is_text=is_text)
+    ok, error_message = validate_question_text(text, is_text=is_text, lang=lang)
     if not ok and error_message:
         await message.answer(error_message, reply_markup=quick_menu)
         return

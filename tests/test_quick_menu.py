@@ -31,21 +31,21 @@ def test_base_menu_layout():
     assert markup.is_persistent is True
     assert len(markup.keyboard) == 2
     assert [button.text for button in markup.keyboard[0]] == ["🎩占い", "💬相談"]
-    assert [button.text for button in markup.keyboard[1]] == ["🛒チャージ", "📊ステータス"]
+    assert [button.text for button in markup.keyboard[1]] == ["🛒チャージ", "📊ステータス", "🌐 言語設定"]
 
 
 def test_base_menu_layout_en():
     markup = base_menu_kb(lang="en")
 
     assert [button.text for button in markup.keyboard[0]] == ["🎩 Tarot", "💬 Chat"]
-    assert [button.text for button in markup.keyboard[1]] == ["🛒 Store", "📊 Status"]
+    assert [button.text for button in markup.keyboard[1]] == ["🛒 Store", "📊 Status", "🌐 Language"]
 
 
 def test_base_menu_layout_pt():
     markup = base_menu_kb(lang="pt")
 
     assert [button.text for button in markup.keyboard[0]] == ["🎩 Tarot", "💬 Conversa"]
-    assert [button.text for button in markup.keyboard[1]] == ["🛒 Loja", "📊 Status"]
+    assert [button.text for button in markup.keyboard[1]] == ["🛒 Loja", "📊 Status", "🌐 Idioma"]
 
 
 def test_help_and_terms_attach_quick_menu(monkeypatch, tmp_path):
