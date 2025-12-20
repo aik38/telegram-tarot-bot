@@ -4,6 +4,15 @@ Telegram向けタロット占いボットのミニマルな開発用セットア
 価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md`（MVP向け48hチェックリスト、冒頭に30〜60分のショートラン手順あり）を参照してください。WBS は `docs/WBS.md`（canonical）、進捗スナップショットは `docs/WBS_PROGRESS.md` を参照してください。
 運用時の SQLite バックアップ/リストア手順は `docs/sqlite_backup.md` にまとめています。
 
+## 最初にやること（30〜60分ショートラン）
+`docs/launch_checklist.md` のショートラン手順を起点に、以下の3ステップで MVP ローンチを最短確認します。
+
+1. `pytest -q`
+2. `python -m bot.main`
+3. Telegram で `/start` `/help` `/buy` `/status` を確認
+
+マーケ素材、SNS整備、監視ダッシュボード等は「ローンチ後」に回して問題ありません。ショートラン後は同じ `docs/launch_checklist.md` の 48h チェックリストを STEP3 として実行してください。
+
 ## インストール / 開発ルーチン（telegram sync）
 
 ```bash
