@@ -144,10 +144,10 @@ def test_start_message_shorter(monkeypatch, tmp_path):
     asyncio.run(bot_main.cmd_start(message))
 
     assert message.answers
-    assert "1日2回" in message.answers[0]
-    assert "ショート" in message.answers[0]
+    assert "1日2回まで無料" in message.answers[0]
+    assert "ワンオラクル" in message.answers[0]
     assert "/read1" in message.answers[0]
-    assert "/read3" in message.answers[0]
+    assert "7日／30日パス" in message.answers[0]
 
 
 def test_love1_command_is_alias(monkeypatch, tmp_path):
