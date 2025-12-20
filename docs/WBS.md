@@ -16,8 +16,8 @@
 3. [~] T4-02: タロット用プロンプトテンプレ（安定した型）。完了条件: core/prompts.py のテンプレが安定し、LLM 出力の型揺れを抑制するユニットテストが追加される。(core/prompts.py)
 4. [x] T4-06: レスポンス後処理（長文カット/要点先出し/改行整形）。完了条件: bot/main.py に後処理ロジックが入り、長文暴走を抑制できる。(bot/utils/postprocess.py で改行整形＋長文ソフトカットを共通化し、call_openai_with_retry に適用)
 5. [ ] T4-07: 料金最適化（モデル選定、max_tokens、キャッシュ、リトライ）。完了条件: LLM のコスト指標が可視化され、運用ルールが README か docs に明記される。
-6. [~] T5-06: 返金/失敗/二重決済の扱い（状態遷移表）。完了条件: 返金・失敗・二重決済時の状態図と通知シナリオが docs に追加され、テストで主要パスをカバーする。(bot/main.py L1563-L1599; core/db.py L255-L286)
-7. [ ] T5-07: 管理者で手動付与/剥奪（トラブル対応）。完了条件: 管理者が手動で付与/剥奪でき、監査ログが残る。
+6. [x] T5-06: 返金/失敗/二重決済の扱い（状態遷移表）。完了条件: 返金・失敗・二重決済時の状態図と通知シナリオが docs に追加され、テストで主要パスをカバーする。(docs/payment_states.md 追加、bot/main.py L1563-L1599; core/db.py L255-L286 に準拠)
+7. [x] T5-07: 管理者で手動付与/剥奪（トラブル対応）。完了条件: 管理者が手動で付与/剥奪でき、監査ログが残る。(bot/main.py の /admin revoke + core/db.py audits で監査記録)
 8. [~] T7-01: ログ整備（request単位で追える）。完了条件: 構造化ログか相当の追跡方法が入り、主要イベントが request_id で紐付けられる。(core/logging.py L1-L26; bot/main.py L2006-L2023)
 9. [x] T7-05: レート制限（ユーザー別：秒間/分間）。完了条件: ThrottleMiddleware のしきい値/通知文言が調整され、連打でも UX を崩さない。(core/config.py で閾値を環境変数化、bot/texts/ja.py で丁寧な案内に更新、tests/test_throttle.py で連打時も案内が返ることを確認)
 10. [x] T7-06: シークレット管理（.env 読み込み、ログへの鍵非出力）。完了条件: シークレット取扱ルールが docs に明記され、不要な出力が抑止される。(core/logging.py のマスクユーティリティ強化、README/launch_checklist に運用ルールを追記、tests/test_logging_masking.py でログ出力のマスクを検証)
@@ -117,8 +117,8 @@
 - [x] T5-03: /buy（チャージ導線）文面とUI (bot/main.py L1187-L1449)
 - [x] T5-04: 決済方式の確定（Telegram Stars/XTR）(bot/main.py L900-L908, L1440-L1447)
 - [x] T5-05: 決済完了→権限付与（entitlements）実装 (bot/main.py L1490-L1560; core/db.py L214-L392)
-- [~] T5-06: 返金/失敗/二重決済の扱い（状態遷移表）(bot/main.py L1563-L1599; core/db.py L255-L286) ― 返金コマンドはあるが状態図と通知は未整備。
-- [ ] T5-07: 管理者で手動付与/剥奪（トラブル対応）
+- [x] T5-06: 返金/失敗/二重決済の扱い（状態遷移表）(docs/payment_states.md; bot/main.py L1563-L1599; core/db.py L255-L286)
+- [x] T5-07: 管理者で手動付与/剥奪（トラブル対応）(/admin grant / revoke 実装と audits で記録)
 - [x] T5-08: 価格表（商品ID・内容・回数・有効期限）を設定ファイル化 (core/store/catalog.py L1-L72)
 - [ ] T5-09: 不正対策（複垢/同端末/再インストール）
 - [ ] T5-10: コスト監視（ユーザー別トークン/日次上限）

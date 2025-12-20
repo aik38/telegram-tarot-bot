@@ -61,6 +61,17 @@ class PaymentEvent:
     created_at: datetime
 
 
+@dataclass
+class AuditRecord:
+    id: int
+    action: str
+    actor_user_id: int
+    target_user_id: int | None
+    payload: str | None
+    status: str
+    created_at: datetime
+
+
 TicketColumn = Literal["tickets_3", "tickets_7", "tickets_10"]
 
 
@@ -175,6 +186,26 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_payment_events_user_created
             ON payment_events(user_id, created_at)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT,
+                actor_user_id INT,
+                target_user_id INT,
+                payload TEXT,
+                status TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audits_action_created
+            ON audits(action, created_at)
             """
         )
 
@@ -336,6 +367,47 @@ def log_payment_event(
     return _row_to_payment_event(row)
 
 
+def log_audit(
+    *,
+    action: str,
+    actor_user_id: int,
+    target_user_id: int | None,
+    payload: str | None,
+    status: str,
+    now: datetime | None = None,
+) -> AuditRecord:
+    now = now or datetime.now(timezone.utc)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO audits (action, actor_user_id, target_user_id, payload, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (action, actor_user_id, target_user_id, payload, status, now.isoformat()),
+        )
+        row = conn.execute(
+            "SELECT * FROM audits WHERE action = ? ORDER BY id DESC LIMIT 1",
+            (action,),
+        ).fetchone()
+    if row is None:
+        raise ValueError("Failed to insert audit record")
+    return _row_to_audit(row)
+
+
+def get_latest_audit(action: str | None = None) -> AuditRecord | None:
+    query = "SELECT * FROM audits"
+    params: tuple[object, ...] = ()
+    if action:
+        query += " WHERE action = ?"
+        params = (action,)
+    query += " ORDER BY id DESC LIMIT 1"
+    with _connect() as conn:
+        row = conn.execute(query, params).fetchone()
+    if not row:
+        return None
+    return _row_to_audit(row)
+
+
 def get_latest_payment(user_id: int) -> PaymentRecord | None:
     with _connect() as conn:
         row = conn.execute(
@@ -401,6 +473,14 @@ def check_db_health() -> tuple[bool, list[str]]:
                     "event_type",
                     "sku",
                     "payload",
+                    "created_at",
+                },
+                "audits": {
+                    "action",
+                    "actor_user_id",
+                    "target_user_id",
+                    "payload",
+                    "status",
                     "created_at",
                 },
             }
@@ -492,6 +572,18 @@ def _row_to_payment_event(row: sqlite3.Row) -> PaymentEvent:
     )
 
 
+def _row_to_audit(row: sqlite3.Row) -> AuditRecord:
+    return AuditRecord(
+        id=row["id"],
+        action=row["action"],
+        actor_user_id=row["actor_user_id"],
+        target_user_id=row["target_user_id"],
+        payload=row["payload"],
+        status=row["status"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
 def _ticket_column_for_sku(sku: str) -> TicketColumn:
     if sku == "TICKET_3":
         return "tickets_3"
@@ -544,6 +636,31 @@ def grant_purchase(user_id: int, sku: str, *, now: datetime | None = None) -> Us
         else:
             raise ValueError(f"Unsupported SKU: {sku}")
 
+    return get_user(user_id)  # type: ignore[return-value]
+
+
+def revoke_purchase(user_id: int, sku: str, *, now: datetime | None = None) -> UserRecord:
+    now = now or datetime.now(timezone.utc)
+    ensure_user(user_id, now=now)
+    with _connect() as conn:
+        if sku.startswith("PASS_") or sku.startswith("PREMIUM_"):
+            conn.execute(
+                "UPDATE users SET pass_until = NULL, premium_until = NULL WHERE user_id = ?",
+                (user_id,),
+            )
+        elif sku.startswith("TICKET_"):
+            column = _ticket_column_for_sku(sku)
+            conn.execute(
+                f"UPDATE users SET {column} = MAX({column} - 1, 0) WHERE user_id = ?",
+                (user_id,),
+            )
+        elif sku == "ADDON_IMAGES":
+            conn.execute(
+                "UPDATE users SET images_enabled = 0 WHERE user_id = ?",
+                (user_id,),
+            )
+        else:
+            raise ValueError(f"Unsupported SKU for revoke: {sku}")
     return get_user(user_id)  # type: ignore[return-value]
 
 
@@ -689,6 +806,7 @@ init_db()
 
 __all__ = [
     "DB_PATH",
+    "AuditRecord",
     "PaymentEvent",
     "PaymentRecord",
     "UserRecord",
@@ -697,6 +815,7 @@ __all__ = [
     "consume_ticket",
     "ensure_user",
     "get_user",
+    "get_latest_audit",
     "get_latest_payment",
     "get_payment_by_charge_id",
     "grant_purchase",
@@ -707,7 +826,9 @@ __all__ = [
     "init_db",
     "log_payment",
     "log_payment_event",
+    "log_audit",
     "mark_payment_refunded",
+    "revoke_purchase",
     "set_last_general_chat_block_notice",
     "set_terms_accepted",
 ]

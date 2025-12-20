@@ -65,11 +65,13 @@ from core.db import (
     has_accepted_terms,
     increment_general_chat_count,
     increment_one_oracle_count,
+    log_audit,
     log_payment,
     log_payment_event,
     mark_payment_refunded,
     set_terms_accepted,
     set_last_general_chat_block_notice,
+    revoke_purchase,
     USAGE_TIMEZONE,
 )
 from core.monetization import (
@@ -835,6 +837,36 @@ def _safe_log_payment_event(
         logger.exception(
             "Failed to log payment event",
             extra={"user_id": user_id, "event_type": event_type, "payload": payload},
+        )
+
+
+def _safe_log_audit(
+    *,
+    action: str,
+    actor_user_id: int | None,
+    target_user_id: int | None,
+    payload: str | None,
+    status: str,
+) -> None:
+    if actor_user_id is None:
+        return
+    try:
+        log_audit(
+            action=action,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            payload=payload,
+            status=status,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to write audit log",
+            extra={
+                "action": action,
+                "actor_user_id": actor_user_id,
+                "target_user_id": target_user_id,
+                "status": status,
+            },
         )
 
 
@@ -2137,6 +2169,25 @@ def _build_admin_grant_summary(user: UserRecord, product: Product, now: datetime
     return "\n".join(lines)
 
 
+def _build_admin_revoke_summary(user: UserRecord, product: Product, now: datetime) -> str:
+    pass_until = effective_pass_expires_at(user.user_id, user, now)
+    pass_label = (
+        pass_until.astimezone(USAGE_TIMEZONE).strftime("%Y-%m-%d %H:%M JST")
+        if pass_until
+        else "なし"
+    )
+    ticket_line = f"3枚={user.tickets_3} / 7枚={user.tickets_7} / 10枚={user.tickets_10}"
+    lines = [
+        f"権限の取り消しが完了しました。{product.title}（SKU: {product.sku}）",
+        f"対象ユーザーID: {user.user_id}",
+        f"・パス有効期限: {pass_label}",
+        f"・チケット残数: {ticket_line}",
+        f"・画像オプション: {'有効' if user.images_enabled else '無効'}",
+        "ご不便をおかけしますが、ユーザーには /status で状況確認を促してください。",
+    ]
+    return "\n".join(lines)
+
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     admin_id = message.from_user.id if message.from_user else None
@@ -2150,19 +2201,24 @@ async def cmd_admin(message: Message) -> None:
         await message.answer(
             "管理者メニューです。サポート中のサブコマンド:\n"
             "・/admin grant <user_id> <SKU> : 指定ユーザーに付与します。\n"
+            "・/admin revoke <user_id> <SKU> : 指定ユーザーの権限を剥奪します。\n"
             f"SKU候補: {valid_skus}"
         )
         return
 
     subcommand = parts[1].lower()
-    if subcommand != "grant":
-        await message.answer("現在サポートしているのは grant のみです。/admin grant をご利用ください。")
+    if subcommand not in {"grant", "revoke"}:
+        await message.answer(
+            "現在サポートしているのは grant / revoke です。/admin grant または /admin revoke をご利用ください。"
+        )
         return
 
     if len(parts) < 4:
         valid_skus = ", ".join(product.sku for product in iter_products())
         await message.answer(
-            "使い方: /admin grant <user_id> <SKU>\n"
+            "使い方:\n"
+            "・付与: /admin grant <user_id> <SKU>\n"
+            "・剥奪: /admin revoke <user_id> <SKU>\n"
             "例: /admin grant 123456789 PASS_7D\n"
             f"SKU候補: {valid_skus}"
         )
@@ -2172,7 +2228,7 @@ async def cmd_admin(message: Message) -> None:
     try:
         target_user_id = int(target_raw)
     except ValueError:
-        await message.answer("ユーザーIDは数字で指定してください。")
+        await message.answer("ユーザーIDは数字でご指定ください。")
         return
 
     sku = parts[3].strip().upper()
@@ -2182,24 +2238,80 @@ async def cmd_admin(message: Message) -> None:
         await message.answer(f"SKUが認識できませんでした。利用可能なSKU: {valid_skus}")
         return
 
+    if subcommand == "grant":
+        try:
+            ensure_user(target_user_id)
+            updated_user = grant_purchase(target_user_id, product.sku, now=utcnow())
+            _safe_log_payment_event(
+                user_id=target_user_id,
+                event_type="admin_grant",
+                sku=product.sku,
+                payload=message.text,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to grant purchase via admin",
+                extra={"admin_id": admin_id, "target_user_id": target_user_id, "sku": sku},
+            )
+            _safe_log_audit(
+                action="admin_grant",
+                actor_user_id=admin_id,
+                target_user_id=target_user_id,
+                payload=message.text,
+                status="failed",
+            )
+            await message.answer("恐れ入ります、付与処理でエラーが発生しました。ログをご確認ください。")
+            return
+
+        summary = _build_admin_grant_summary(updated_user, product, utcnow())
+        _safe_log_audit(
+            action="admin_grant",
+            actor_user_id=admin_id,
+            target_user_id=target_user_id,
+            payload=message.text,
+            status="success",
+        )
+        await message.answer(summary)
+        return
+
+    existing_user = get_user(target_user_id)
+    if not existing_user:
+        await message.answer(
+            "まだ登録履歴が見つかりませんでした。ユーザーが一度も利用していない可能性があります。"
+        )
+        return
+
     try:
-        ensure_user(target_user_id)
-        updated_user = grant_purchase(target_user_id, product.sku, now=utcnow())
+        updated_user = revoke_purchase(target_user_id, product.sku, now=utcnow())
         _safe_log_payment_event(
             user_id=target_user_id,
-            event_type="admin_grant",
+            event_type="admin_revoke",
             sku=product.sku,
             payload=message.text,
         )
     except Exception:
         logger.exception(
-            "Failed to grant purchase via admin",
+            "Failed to revoke purchase via admin",
             extra={"admin_id": admin_id, "target_user_id": target_user_id, "sku": sku},
         )
-        await message.answer("付与処理でエラーが発生しました。ログを確認してください。")
+        _safe_log_audit(
+            action="admin_revoke",
+            actor_user_id=admin_id,
+            target_user_id=target_user_id,
+            payload=message.text,
+            status="failed",
+        )
+        await message.answer("恐れ入ります、取り消し処理でエラーが発生しました。ログをご確認ください。")
         return
 
-    summary = _build_admin_grant_summary(updated_user, product, utcnow())
+    summary = _build_admin_revoke_summary(updated_user, product, utcnow())
+    _safe_log_audit(
+        action="admin_revoke",
+        actor_user_id=admin_id,
+        target_user_id=target_user_id,
+        payload=message.text,
+        status="success",
+    )
     await message.answer(summary)
 
 
