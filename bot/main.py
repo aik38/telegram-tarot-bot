@@ -415,6 +415,9 @@ SENSITIVE_TOPICS: dict[str, list[str]] = {
     ],
 }
 SUPPORTED_LANGS = {"ja", "en", "pt"}
+LANGUAGE_BUTTON_LABELS = {
+    lang: t(lang, "MENU_LANGUAGE_LABEL") for lang in SUPPORTED_LANGS
+}
 
 
 def _get_theme_labels(lang: str) -> dict[str, str]:
@@ -1294,6 +1297,22 @@ def build_lang_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_PT"), callback_data="lang:set:pt")],
         ]
     )
+
+
+def _normalize_language_button_text(text: str) -> str:
+    if not text:
+        return ""
+    return text.strip().removeprefix("🌐").strip()
+
+
+def _is_language_button_text(text: str) -> bool:
+    normalized = (text or "").strip()
+    normalized_no_emoji = _normalize_language_button_text(text)
+    candidates = set()
+    for label in LANGUAGE_BUTTON_LABELS.values():
+        candidates.add(label.strip())
+        candidates.add(_normalize_language_button_text(label))
+    return normalized in candidates or normalized_no_emoji in candidates
 
 
 def _extract_start_payload(message: Message) -> str | None:
@@ -3536,7 +3555,7 @@ async def handle_message(message: Message) -> None:
         await prompt_status(message, now=now)
         return
 
-    if text.startswith("🌐"):
+    if _is_language_button_text(text):
         await cmd_lang(message)
         return
 
