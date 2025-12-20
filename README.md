@@ -4,11 +4,14 @@ Telegram向けタロット占いボットのミニマルな開発用セットア
 価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md` を参照してください。WBS は `docs/WBS.md`（canonical）、進捗スナップショットは `docs/WBS_PROGRESS.md` を参照してください。
 運用時の SQLite バックアップ/リストア手順は `docs/sqlite_backup.md` にまとめています。
 
-## インストール
+## インストール / 開発ルーチン（telegram sync）
 
 ```bash
 pip install -r requirements.txt
 ```
+
+- 日常運用は PowerShell で `tools/sync.ps1`（ショートカット名: “telegram sync”）を実行する想定です。内部で `git pull --rebase` → `.venv\Scripts\python.exe -m pytest -q` → 変更があれば commit/push の順で回します。
+  - Windows 由来の junk（Desktop.ini など）だけが差分の場合は commit をスキップします（PR #47 実装）。
 
 ### 主な環境変数
 
@@ -45,6 +48,7 @@ pip install -r requirements.txt
 - メッセージに「占って」と入れると、タロット占いモードでカードを引いて返答します。
 - それ以外のメッセージには、雑談や相談に答える通常の会話モードで返信します。
 - 例）`今の恋愛運を占ってほしい` → タロットモード、`今日はしんどかった…ちょっと話を聞いて` → 通常会話モード。
+- 利用規約と安全ガイドは `/terms` または `/help` から辿れます。
 
 - コマンド：`/read1`（1枚引き）、`/read3`（3枚引き）、`/hexa`（ヘキサグラム）、`/celtic`（ケルト十字）
   - `/love1` `/love3` は旧コマンドとして互換対応しています。
@@ -118,8 +122,19 @@ Bot からはスプレッドを選び `draw_cards` を呼ぶだけで、カー�
 
 ### テスト
 
-```bash
+system python だと `pytest` が見つからない場合があるため、必ず venv を前提に実行してください。
+
+1) `.venv` を有効化して実行する場合
+
+```powershell
+.\.venv\Scripts\Activate.ps1
 python -m pytest -q
+```
+
+2) 有効化せずに venv の python を直指定する場合
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 # akolasia_tarot_bot 起動メモ
 
@@ -142,7 +157,7 @@ git commit -m "Update tarot bot from local"; `
 git push origin main
 
 ## Dev routine (daily)
-1) Update local + test: `tools/sync.ps1` (double-click shortcut available)
+1) Run `tools/sync.ps1` (= telegram sync): `git pull --rebase` → `.venv\Scripts\python.exe -m pytest -q` → 変更があれば commit/push（junk だけなら commit しない）。
 2) Pick next item from `docs/WBS.md` (Next 10 tasks)
 3) Use Codex (web) to implement 1 task per PR
 4) After merge: run sync again and smoke-test `/start` `/buy` `/status`

@@ -3,16 +3,16 @@
 このドキュメントを **唯一のWBS** とし、進捗スナップショットは `docs/WBS_PROGRESS.md` に記録します（最終更新: 2025-05-06 UTC）。見た目よりも「落ちない」「迷子にならない」を最優先で維持します。
 
 ## Next 10 tasks（優先度順・完了条件つき）
-1. [x] T1-08: 管理者用コマンド拡充（/admin grant）。完了条件: 管理者が /admin grant <user_id> <SKU> でパス/チケット/アドオンを安全に付与でき、成功/失敗時の案内が丁寧に返る。(bot/main.py L1706-L1777; tests/test_bot_modes.py L281-L310)
-2. [x] T1-05: 例文（質問の例）をテーマ別に最小セットへ拡充し、/help からも辿れるようにする。完了条件: bot/main.py の例文がテーマ別に整理され、README か /help から到達できる。(bot/main.py L130-L205, L1345-L1346; bot/texts/ja.py L1-L15; tests/test_bot_modes.py L71-L80)
-3. [x] T2-04: “引いたカード”表示フォーマットを固定し、全スプレッドで一貫する出力を保証する。完了条件: bot/main.py の出力が統一され、tests でフォーマット差分を検知できる。(bot/main.py L1171-L1186; tests/test_drawn_cards_format.py L28-L74)
-4. [x] T2-05: スプレッドごとの役割語彙テンプレートを整備する。完了条件: core/tarot/spreads.py か関連モジュールに役割語彙が追加され、LLMプロンプトが活用できる。(core/tarot/spreads.py L14-L128)
-5. [~] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）を拡充する。完了条件: tests/ 配下にカード/スプレッドの整合性を確認するテストが増え、pytest が通る。(tests/test_drawn_cards_format.py L28-L74 でフォーマット差分検知を追加)
-6. [x] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）を明記し、ボットの応答に反映する。完了条件: bot/main.py で禁止テーマをガイドし、/terms か /help から確認できる。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
-7. [x] T3-05: “途中で別コマンド”が来たときの状態リセットルールを定義する。完了条件: state管理のルールがコード化され、tests で意図しない混線が起きないことを確認する。(bot/main.py L769-L838, L1504-L1669; tests/test_bot_modes.py L202-L229)
-8. [x] T3-06: 一定時間無操作で状態を破棄するタイムアウトを実装する。完了条件: 状態保持の期限が設定され、タイムアウト時の再案内が行われる。(bot/main.py L101-L130, L824-L838, L2355-L2393; tests/test_bot_modes.py L215-L229)
-9. [x] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生など）を実装する。完了条件: core/prompts.py か bot/main.py にテーマ別プロンプトが入り、レスポンスに反映される。(core/prompts.py L67-L73; bot/main.py L1346-L1393)
-10. [x] T4-05: NG/危険領域の制御（医療/法律/自傷他害）を追加する。完了条件: 禁止テーマの検出と安全な応答が実装され、テストで確認できる。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; tests/test_safety_topics.py L1-L34)
+1. [ ] T3-07: 相談モード仕様確定（回数制限と文体）。完了条件: 相談モードの UX/回数制限/文体が固まり、/help または README で案内できる。
+2. [ ] T3-08: 同一ユーザーの並行セッション扱い。完了条件: 同一ユーザーの並行対話に対するロック/キュー/上書き方針が決まり、bot/main.py に実装される。
+3. [~] T4-02: タロット用プロンプトテンプレ（安定した型）。完了条件: core/prompts.py のテンプレが安定し、LLM 出力の型揺れを抑制するユニットテストが追加される。(core/prompts.py)
+4. [ ] T4-06: レスポンス後処理（長文カット/要点先出し/改行整形）。完了条件: bot/main.py に後処理ロジックが入り、長文暴走を抑制できる。
+5. [ ] T4-07: 料金最適化（モデル選定、max_tokens、キャッシュ、リトライ）。完了条件: LLM のコスト指標が可視化され、運用ルールが README か docs に明記される。
+6. [~] T5-06: 返金/失敗/二重決済の扱い（状態遷移表）。完了条件: 返金・失敗・二重決済時の状態図と通知シナリオが docs に追加され、テストで主要パスをカバーする。(bot/main.py L1563-L1599; core/db.py L255-L286)
+7. [ ] T5-07: 管理者で手動付与/剥奪（トラブル対応）。完了条件: 管理者が手動で付与/剥奪でき、監査ログが残る。
+8. [~] T7-01: ログ整備（request単位で追える）。完了条件: 構造化ログか相当の追跡方法が入り、主要イベントが request_id で紐付けられる。(core/logging.py L1-L26; bot/main.py L2006-L2023)
+9. [~] T7-05: レート制限（ユーザー別：秒間/分間）。完了条件: ThrottleMiddleware のしきい値/通知文言が調整され、連打でも UX を崩さない。
+10. [~] T7-06: シークレット管理（.env 読み込み、ログへの鍵非出力）。完了条件: シークレット取扱ルールが docs に明記され、不要な出力が抑止される。(core/config.py)
 
 ## 記号ルール
 - `[ ]` 未着手 / ToDo
@@ -23,6 +23,9 @@
 ## Safety notes（禁止/注意テーマ）
 - 以下は占いで断定せず、専門家/公的窓口を案内する: 医療・診断/薬、法律・契約/紛争、投資助言、暴力・他害、自傷/強い不安。
 - /help と /terms から禁止/注意テーマにリンクし、bot/main.py の安全ガード（build_sensitive_topic_notice / respond_with_safety_notice）で自動案内します。(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
+
+## 備考（運用メモ）
+- Windows 由来の junk ファイルは `.gitignore` と `tools/sync.ps1` のフィルタで無視済み（PR #47）。
 
 ## 現状ハイライト（payment flow stabilizing の確認結果）
 - Invoice多重発行の抑止と stale callback 吸収が入っている（dedup TTL＋`_safe_answer_callback/_safe_answer_pre_checkout`）。(bot/main.py L182-L208, L431-L447, L450-L475, L1393-L1449)
@@ -59,10 +62,10 @@
 - [x] T2-01: 78枚＋正逆のカード定義（ID/名称/キーワード）(core/tarot/cards.py L1-L196)
 - [x] T2-02: スプレッド定義（1枚/3枚/7枚/10枚）(core/tarot/spreads.py L1-L68; bot/main.py L646-L689)
 - [x] T2-03: 抽選ロジック（箇条書き数 action_count の抽選）(core/tarot/draws.py; bot/main.py L559-L608)
-- [x] T2-04: “引いたカード”表示フォーマット固定（card line + 整形）(bot/main.py L1171-L1186; tests/test_drawn_cards_format.py L28-L74)
-    - [x] T2-05: スプレッドごとの役割語彙テンプレ
-- [~] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）(tests/test_drawn_cards_format.py L28-L74)
-- [x] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
+- [x] T2-04: “引いたカード”表示フォーマット固定（card line + 整形）(PR #43; bot/main.py L1171-L1186; tests/test_drawn_cards_format.py L28-L74)
+    - [x] T2-05: スプレッドごとの役割語彙テンプレ (PR #46; core/tarot/spreads.py L14-L128)
+- [x] T2-06: 単体テスト（カード整合性・抽選分布・フォーマット）(PR #43; tests/test_drawn_cards_format.py L28-L74)
+- [x] T2-07: 禁止/注意テーマの扱い（医療/法律/投資）(PR #44; bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; bot/texts/ja.py L1-L15; tests/test_safety_topics.py L1-L34)
 
 ---
 
@@ -71,8 +74,8 @@
 - [x] T3-02: 質問入力（フリーテキスト）(bot/main.py L1975-L2044)
 - [x] T3-03: スプレッド選択（1枚固定の一本道／アップセルボタン）(bot/main.py L1478-L1486, L1659-L1726)
 - [x] T3-04: 会話状態（theme/question/spread）を保持 (bot/main.py L1000-L1089)
-- [x] T3-05: “途中で別コマンド”が来たときの状態リセットルール (bot/main.py L769-L838, L1504-L1669; tests/test_bot_modes.py L202-L229)
-- [x] T3-06: タイムアウト（一定時間で状態破棄）(bot/main.py L101-L130, L824-L838, L2355-L2393; tests/test_bot_modes.py L215-L229)
+- [x] T3-05: “途中で別コマンド”が来たときの状態リセットルール (PR #45; bot/main.py L769-L838, L1504-L1669; tests/test_bot_modes.py L202-L229)
+- [x] T3-06: タイムアウト（一定時間で状態破棄）(PR #45; bot/main.py L101-L130, L824-L838, L2355-L2393; tests/test_bot_modes.py L215-L229)
 - [ ] T3-07: 相談モード仕様確定（回数制限と文体）
 - [ ] T3-08: 同一ユーザーの並行セッション扱い
 
@@ -82,8 +85,8 @@
 - [x] T4-01: OpenAI へのAPI呼び出し（200 OK）(bot/main.py L485-L520)
 - [~] T4-02: タロット用プロンプトテンプレ（安定した型）(core/prompts.py)
 - [x] T4-03: “箇条書き数”のガイダンスをLLM出力に反映 (bot/main.py L1003-L1078)
-    - [x] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生…）
-- [x] T4-05: NG/危険領域の制御（医療/法律/自傷他害）(bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; tests/test_safety_topics.py L1-L34)
+    - [x] T4-04: テーマ別プロンプト分岐（恋愛/仕事/人生…）(PR #46; core/prompts.py L67-L73; bot/main.py L1346-L1393)
+- [x] T4-05: NG/危険領域の制御（医療/法律/自傷他害）(PR #44; bot/main.py L171-L248, L293-L333, L1005-L1036, L2169-L2234; tests/test_safety_topics.py L1-L34)
 - [ ] T4-06: レスポンス後処理（長文カット/要点先出し/改行整形）
 - [ ] T4-07: 料金最適化（モデル選定、max_tokens、キャッシュ、リトライ）
 - [ ] (!) T4-08: API分離の要否（Bot直呼び vs FastAPI経由）
