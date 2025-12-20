@@ -62,3 +62,12 @@ def get_tarot_system_prompt(theme: str | None) -> str:
     if hint:
         return f"{base}\n- テーマ: {hint}"
     return base
+
+
+def theme_instructions(theme: str | None) -> str:
+    theme_focus: dict[str, str] = {
+        "love": "恋愛・関係性への配慮を中心に、相手の気持ちや距離感を整理し、優しく示唆する。",
+        "work": "仕事・キャリアの場面に絞り、立ち回りや優先順位、具体的な次の一手を実務寄りに提案する。",
+        "life": "人生全体の整理と自己理解に焦点を当て、生活習慣や選択肢を穏やかに整理し、希望を持てる形で示す。",
+    }
+    return theme_focus.get(theme or "", theme_focus["life"])

@@ -8,7 +8,7 @@ from collections import deque
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from time import monotonic, perf_counter
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from dotenv import load_dotenv
 
@@ -74,6 +74,7 @@ from core.prompts import (
     TAROT_OUTPUT_RULES,
     TAROT_FIXED_OUTPUT_FORMAT,
     get_tarot_system_prompt,
+    theme_instructions,
 )
 from core.tarot import (
     ONE_CARD,
@@ -384,7 +385,48 @@ def _parse_invoice_payload(payload: str) -> tuple[str | None, int | None]:
     return (str(sku) if sku is not None else None, user_id)
 
 
-def format_tarot_answer(text: str, card_line: str | None = None) -> str:
+def _inject_position_headings(
+    lines: list[str], position_labels: Sequence[str] | None
+) -> list[str]:
+    if not position_labels:
+        return lines
+
+    bracketed_labels = [f"【{label}】" for label in position_labels if label]
+    if not bracketed_labels:
+        return lines
+
+    formatted_text = "\n".join(lines)
+    missing_labels = [label for label in bracketed_labels if label not in formatted_text]
+    if not missing_labels:
+        return lines
+
+    try:
+        card_line_index = next(
+            idx for idx, line in enumerate(lines) if "引いたカード：" in line
+        )
+    except StopIteration:
+        card_line_index = None
+
+    insert_index = (card_line_index + 1) if card_line_index is not None else len(lines)
+    new_lines: list[str] = []
+    new_lines.extend(lines[:insert_index])
+
+    if new_lines and new_lines[-1] != "":
+        new_lines.append("")
+    new_lines.extend(missing_labels)
+    if insert_index < len(lines) and lines[insert_index] != "":
+        new_lines.append("")
+
+    new_lines.extend(lines[insert_index:])
+    return new_lines
+
+
+def format_tarot_answer(
+    text: str,
+    card_line: str | None = None,
+    *,
+    position_labels: Sequence[str] | None = None,
+) -> str:
     content = (text or "").strip()
     if not content:
         return "占い結果をうまく作成できませんでした。もう一度占わせてください。"
@@ -430,15 +472,22 @@ def format_tarot_answer(text: str, card_line: str | None = None) -> str:
     while compacted and compacted[-1] == "":
         compacted.pop()
 
+    compacted = _inject_position_headings(compacted, position_labels)
     formatted = "\n".join(compacted)
     if len(formatted) > 1400:
         formatted = formatted[:1380].rstrip() + "…"
     return formatted
 
 
-def format_long_answer(text: str, mode: str, card_line: str | None = None) -> str:
+def format_long_answer(
+    text: str,
+    mode: str,
+    card_line: str | None = None,
+    *,
+    position_labels: Sequence[str] | None = None,
+) -> str:
     if mode == "tarot":
-        return format_tarot_answer(text, card_line)
+        return format_tarot_answer(text, card_line, position_labels=position_labels)
 
     content = (text or "").strip()
     if not content:
@@ -1306,6 +1355,7 @@ def build_tarot_messages(
     rules = SHORT_TAROT_OUTPUT_RULES if short else TAROT_OUTPUT_RULES
     rules_text = "\n".join(f"- {rule}" for rule in rules)
     tarot_system_prompt = f"{get_tarot_system_prompt(theme)}\n出力ルール:\n{rules_text}"
+    theme_focus = theme_instructions(theme)
     if action_count is not None:
         if action_count == 4:
             action_count_text = (
@@ -1324,7 +1374,8 @@ def build_tarot_messages(
         f"{TAROT_FIXED_OUTPUT_FORMAT}\n"
         f"{action_count_text}\n"
         "- 1枚引きは350〜650字、3枚以上は550〜900字を目安に、1400文字以内に収める。\n"
-        "- カード名は「引いたカード：」行で1回だけ伝える。🃏などの絵文字は禁止。"
+        "- カード名は「引いたカード：」行で1回だけ伝える。🃏などの絵文字は禁止。\n"
+        f"- テーマ別フォーカス: {theme_focus}"
     )
 
     tarot_payload = {
@@ -2134,6 +2185,7 @@ async def handle_tarot_reading(
             answer,
             "tarot",
             card_line=format_drawn_cards(drawn_payload),
+            position_labels=spread_to_use.position_labels,
         )
         if guidance_note:
             formatted_answer = f"{formatted_answer}\n\n{guidance_note}"

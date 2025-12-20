@@ -16,6 +16,7 @@ class Spread:
     id: str
     name_ja: str
     positions: Sequence[SpreadPosition]
+    position_labels: Sequence[str] | None = None
 
 
 ONE_CARD = Spread(
@@ -28,6 +29,7 @@ ONE_CARD = Spread(
             meaning_ja="質問者へのメインメッセージを示します。",
         ),
     ],
+    position_labels=("メインメッセージ",),
 )
 
 THREE_CARD_SITUATION = Spread(
@@ -38,6 +40,7 @@ THREE_CARD_SITUATION = Spread(
         SpreadPosition("obstacle", "障害や課題", "乗り越えるべき障害や課題を表します。"),
         SpreadPosition("future", "未来の可能性", "流れの先にある可能性を表します。"),
     ],
+    position_labels=("現在", "障害", "未来"),
 )
 
 HEXAGRAM = Spread(
@@ -80,6 +83,15 @@ HEXAGRAM = Spread(
             "この流れが続いた先に期待できる結果や関係の着地点を示します。",
         ),
     ],
+    position_labels=(
+        "あなたの気持ち",
+        "相手の気持ち",
+        "現状",
+        "障害",
+        "近未来",
+        "アドバイス",
+        "結果",
+    ),
 )
 
 CELTIC_CROSS = Spread(
@@ -101,6 +113,18 @@ CELTIC_CROSS = Spread(
         SpreadPosition("hopes_fears", "願望／恐れ", "叶えたいこと、同時に避けたいことなど、心の奥にある期待や不安を示します。"),
         SpreadPosition("outcome", "最終結果", "全体の流れが行き着きやすい未来の姿や、到達しやすい結末を示します。"),
     ],
+    position_labels=(
+        "現在",
+        "課題",
+        "顕在意識",
+        "潜在意識",
+        "過去",
+        "近未来",
+        "助言",
+        "環境",
+        "願望/恐れ",
+        "結果",
+    ),
 )
 
 ALL_SPREADS: dict[str, Spread] = {
