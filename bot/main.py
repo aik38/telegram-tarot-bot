@@ -102,6 +102,7 @@ IN_FLIGHT_USERS: set[int] = set()
 RECENT_HANDLED: set[tuple[int, int]] = set()
 RECENT_HANDLED_ORDER: deque[tuple[int, int]] = deque(maxlen=500)
 PENDING_PURCHASES: dict[tuple[int, str], float] = {}
+STATE_TIMEOUT = timedelta(minutes=20)
 
 FREE_ONE_ORACLE_TRIAL_PER_DAY = 2
 FREE_ONE_ORACLE_POST_TRIAL_PER_DAY = 1
@@ -125,6 +126,7 @@ STALE_CALLBACK_MESSAGE = "ボタンの有効期限が切れました。/buy か�
 USER_MODE: dict[int, str] = {}
 TAROT_FLOW: dict[int, str | None] = {}
 TAROT_THEME: dict[int, str] = {}
+USER_STATE_LAST_ACTIVE: dict[int, datetime] = {}
 DEFAULT_THEME = "life"
 
 TAROT_THEME_LABELS: dict[str, str] = {
@@ -805,6 +807,43 @@ def reset_tarot_state(user_id: int | None) -> None:
     TAROT_THEME.pop(user_id, None)
 
 
+def reset_conversation_state(user_id: int | None) -> None:
+    if user_id is None:
+        return
+    USER_MODE.pop(user_id, None)
+    reset_tarot_state(user_id)
+    USER_STATE_LAST_ACTIVE.pop(user_id, None)
+
+
+def mark_user_active(user_id: int | None, *, now: datetime | None = None) -> None:
+    if user_id is None:
+        return
+    USER_STATE_LAST_ACTIVE[user_id] = now or utcnow()
+
+
+async def reset_state_if_inactive(message: Message, *, now: datetime) -> bool:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        return False
+    last_active = USER_STATE_LAST_ACTIVE.get(user_id)
+    if last_active is None:
+        return False
+    if now - last_active < STATE_TIMEOUT:
+        return False
+    reset_conversation_state(user_id)
+    await message.answer(
+        "しばらく操作がなかったため状態をリセットしました。/start か /help からやり直してください。",
+        reply_markup=base_menu_kb(),
+    )
+    return True
+
+
+def reset_state_for_explicit_command(user_id: int | None) -> None:
+    if user_id is None:
+        return
+    reset_conversation_state(user_id)
+
+
 def get_tarot_theme_label(theme: str) -> str:
     return TAROT_THEME_LABELS.get(theme, TAROT_THEME_LABELS[DEFAULT_THEME])
 
@@ -840,6 +879,7 @@ async def prompt_tarot_mode(message: Message) -> None:
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, DEFAULT_THEME)
     set_tarot_flow(user_id, "awaiting_theme")
+    mark_user_active(user_id)
     await message.answer(TAROT_THEME_PROMPT, reply_markup=base_menu_kb())
     await message.answer("テーマを選んでください👇", reply_markup=build_tarot_theme_keyboard())
 
@@ -848,12 +888,14 @@ async def prompt_consult_mode(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
+    mark_user_active(user_id)
     await message.answer(CONSULT_MODE_PROMPT, reply_markup=base_menu_kb())
 
 
 async def prompt_charge_menu(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "charge")
+    mark_user_active(user_id)
     await message.answer(CHARGE_MODE_PROMPT, reply_markup=base_menu_kb())
     await send_store_menu(message)
 
@@ -861,6 +903,7 @@ async def prompt_charge_menu(message: Message) -> None:
 async def prompt_status(message: Message, *, now: datetime) -> None:
     user_id = message.from_user.id if message.from_user else None
     set_user_mode(user_id, "status")
+    mark_user_active(user_id, now=now)
     if user_id is None:
         await message.answer(
             "ユーザー情報を確認できませんでした。個別チャットからお試しくださいませ。",
@@ -1460,12 +1503,16 @@ async def send_store_menu(message: Message) -> None:
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message) -> None:
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    mark_user_active(message.from_user.id if message.from_user else None)
     await message.answer(build_help_text(), reply_markup=menu_only_kb())
 
 
 @dp.message(Command("terms"))
 async def cmd_terms(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    reset_state_for_explicit_command(user_id)
+    mark_user_active(user_id)
     if user_id is not None:
         ensure_user(user_id)
 
@@ -1524,17 +1571,23 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
 
 @dp.message(Command("support"))
 async def cmd_support(message: Message) -> None:
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    mark_user_active(message.from_user.id if message.from_user else None)
     await message.answer(get_support_text(), reply_markup=menu_only_kb())
 
 
 @dp.message(Command("paysupport"))
 async def cmd_pay_support(message: Message) -> None:
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    mark_user_active(message.from_user.id if message.from_user else None)
     await message.answer(get_pay_support_text())
 
 
 @dp.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    reset_state_for_explicit_command(user_id)
+    mark_user_active(user_id)
     if user_id is not None:
         ensure_user(user_id)
         if not has_accepted_terms(user_id):
@@ -1549,29 +1602,37 @@ async def cmd_buy(message: Message) -> None:
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message) -> None:
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    mark_user_active(message.from_user.id if message.from_user else None)
     now = utcnow()
     await prompt_status(message, now=now)
 
 
 @dp.message(Command("read1"))
 async def cmd_read1(message: Message) -> None:
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    mark_user_active(message.from_user.id if message.from_user else None)
     await prompt_tarot_mode(message)
 
 
 @dp.message(Command("love1"))
 async def cmd_love1(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    reset_state_for_explicit_command(user_id)
     set_user_mode(user_id, "tarot")
     set_tarot_theme(user_id, "love")
     set_tarot_flow(user_id, "awaiting_question")
+    mark_user_active(user_id)
     await message.answer(build_tarot_question_prompt("love"), reply_markup=base_menu_kb())
 
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
+    reset_state_for_explicit_command(user_id)
     set_user_mode(user_id, "consult")
     reset_tarot_state(user_id)
+    mark_user_active(user_id)
     await message.answer(get_start_text(), reply_markup=base_menu_kb())
 
 
@@ -1581,6 +1642,7 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
     user_id = query.from_user.id if query.from_user else None
     reset_tarot_state(user_id)
     set_user_mode(user_id, "consult")
+    mark_user_active(user_id)
     await state.clear()
     if query.message:
         await query.message.answer(
@@ -1597,6 +1659,7 @@ async def handle_nav_status(query: CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     set_user_mode(user_id, "status")
+    mark_user_active(user_id)
     now = utcnow()
     user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
     formatted = format_status(user, now=now)
@@ -1613,6 +1676,7 @@ async def handle_nav_charge(query: CallbackQuery, state: FSMContext) -> None:
     if user_id is not None:
         ensure_user(user_id)
         set_user_mode(user_id, "charge")
+        mark_user_active(user_id)
     await state.clear()
     if query.message:
         await prompt_charge_menu(query.message)
@@ -1732,6 +1796,7 @@ async def handle_tarot_theme_select(query: CallbackQuery):
     data = query.data or ""
     _, _, theme = data.partition(":")
     user_id = query.from_user.id if query.from_user else None
+    mark_user_active(user_id)
     if theme not in {"love", "marriage", "work", "life"}:
         await _safe_answer_callback(query, "テーマを認識できませんでした。", show_alert=True)
         return
@@ -2318,6 +2383,9 @@ async def handle_message(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     if not _mark_recent_handled(message):
         return
+    if await reset_state_if_inactive(message, now=now):
+        return
+    mark_user_active(user_id, now=now)
     admin_mode = is_admin_user(user_id)
     user_mode = get_user_mode(user_id)
     tarot_flow = TAROT_FLOW.get(user_id)

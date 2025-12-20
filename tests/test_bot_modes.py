@@ -199,6 +199,36 @@ def test_paywall_blocks_paid_spread(monkeypatch, tmp_path):
     assert "/buy" in message.answers[0]
 
 
+def test_explicit_command_resets_tarot_flow(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    user_id = 21
+    bot_main.set_user_mode(user_id, "tarot")
+    bot_main.set_tarot_flow(user_id, "awaiting_question")
+    message = DummyMessage("/help", user_id=user_id)
+
+    asyncio.run(bot_main.cmd_help(message))
+
+    assert bot_main.TAROT_FLOW.get(user_id) is None
+    assert bot_main.get_user_mode(user_id) == "consult"
+
+
+def test_timeout_resets_state(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    user_id = 22
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bot_main.set_user_mode(user_id, "tarot")
+    bot_main.set_tarot_flow(user_id, "awaiting_question")
+    bot_main.USER_STATE_LAST_ACTIVE[user_id] = now - bot_main.STATE_TIMEOUT - timedelta(minutes=1)
+    message = DummyMessage("続きを送ります", user_id=user_id)
+    monkeypatch.setattr(bot_main, "utcnow", lambda: now)
+
+    asyncio.run(bot_main.handle_message(message))
+
+    assert any("リセット" in ans for ans in message.answers)
+    assert bot_main.TAROT_FLOW.get(user_id) is None
+    assert bot_main.USER_MODE.get(user_id) is None
+
+
 def test_terms_required_before_buy(monkeypatch, tmp_path):
     bot_main = import_bot_main(monkeypatch, tmp_path)
     message = DummyMessage("/buy", user_id=99)
