@@ -19,6 +19,14 @@ def _collect_button_texts(markup: InlineKeyboardMarkup) -> list[str]:
         ("Idioma", "pt"),
         ("🌐Language", "en"),
         ("🌐　言語設定", "ja"),
+        ("🌐\xa0Language", "en"),
+        ("🌐\u3000Language", "en"),
+        ("🌐\ufe0f Language", "en"),
+        ("\u200b🌐 Language", "en"),
+        ("\ufeff🌐 Language", "en"),
+        ("\u200f🌐 Language", "en"),
+        ("🌐 言語設定", "ja"),
+        ("🌐 Idioma", "pt"),
     ],
 )
 def test_language_reply_button_shows_picker(monkeypatch, tmp_path, button_text, user_lang):
@@ -44,3 +52,19 @@ def test_language_reply_button_shows_picker(monkeypatch, tmp_path, button_text, 
     ]
     for option in expected_options:
         assert option in buttons
+
+
+@pytest.mark.parametrize(
+    "free_text",
+    [
+        "language",
+        "LANGUAGE",
+        "I want to change language",
+        "言語設定お願いします",
+        "Idioma por favor",
+    ],
+)
+def test_language_reply_button_does_not_misfire(monkeypatch, tmp_path, free_text):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+
+    assert bot_main._is_language_button_text(free_text) is False

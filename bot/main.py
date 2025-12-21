@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import unicodedata
 from collections import deque
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -418,6 +419,8 @@ SUPPORTED_LANGS = {"ja", "en", "pt"}
 LANGUAGE_BUTTON_LABELS = {
     lang: t(lang, "MENU_LANGUAGE_LABEL") for lang in SUPPORTED_LANGS
 }
+GLOBE_EMOJI_PREFIXES = ("🌐", "🌍", "🌎", "🌏")
+_VARIATION_SELECTOR_RE = re.compile(r"[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
 
 
 def _get_theme_labels(lang: str) -> dict[str, str]:
@@ -1299,17 +1302,43 @@ def build_lang_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
     )
 
 
+def _strip_invisible(text: str) -> str:
+    if not text:
+        return ""
+    stripped_chars: list[str] = []
+    for ch in text:
+        if _VARIATION_SELECTOR_RE.match(ch):
+            continue
+        category = unicodedata.category(ch)
+        if category in {"Cf", "Cc"}:
+            continue
+        stripped_chars.append(ch)
+    return "".join(stripped_chars)
+
+
 def _normalize_language_button_text(text: str) -> str:
     if not text:
         return ""
-    normalized = text.strip()
-    # Remove common globe emojis and variation selectors at the start.
-    for prefix in ("🌐", "🌍", "🌎", "🌏"):
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\ufe0e", "").replace("\ufe0f", "")
+    normalized = _strip_invisible(normalized)
+    normalized = normalized.strip()
+    for prefix in GLOBE_EMOJI_PREFIXES:
         if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
+            normalized = normalized[len(prefix) :]
+            normalized = normalized.lstrip()
             break
-    normalized = normalized.lstrip("\ufe0f").strip()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
+
+
+def _has_language_button_prefix(text: str) -> bool:
+    if not text:
+        return False
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\ufe0e", "").replace("\ufe0f", "")
+    normalized = _strip_invisible(normalized)
+    return normalized.lstrip().startswith(GLOBE_EMOJI_PREFIXES)
 
 
 def _is_language_button_text(text: str) -> bool:
@@ -1320,15 +1349,22 @@ def _is_language_button_text(text: str) -> bool:
 
     candidates = set()
     for label in LANGUAGE_BUTTON_LABELS.values():
+        normalized_label = _normalize_language_button_text(label)
         candidates.add(label.strip())
-        candidates.add(_normalize_language_button_text(label))
-        candidates.add(_normalize_language_button_text(label).casefold())
+        candidates.add(normalized_label)
 
-    return (
-        raw in candidates
-        or normalized in candidates
-        or normalized.casefold() in candidates
-    )
+    if raw in candidates or normalized in candidates:
+        return True
+
+    if not _has_language_button_prefix(text):
+        return False
+
+    for label in LANGUAGE_BUTTON_LABELS.values():
+        normalized_label = _normalize_language_button_text(label)
+        candidates.add(label.strip().casefold())
+        candidates.add(normalized_label.casefold())
+
+    return normalized.casefold() in candidates
 
 
 def _extract_start_payload(message: Message) -> str | None:
