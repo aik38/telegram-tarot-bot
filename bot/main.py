@@ -1044,8 +1044,27 @@ def _mark_recent_handled(message: Message) -> bool:
     return True
 
 
-def _should_process_message(message: Message, *, handler: str | None = None) -> bool:
+def _should_process_message(
+    message: Message,
+    *,
+    handler: str | None = None,
+    allow_language_duplicate: bool = False,
+    language_button_hint: str | None = None,
+) -> bool:
     if _mark_recent_handled(message):
+        return True
+
+    if allow_language_duplicate:
+        logger.info(
+            "Bypassing duplicate message for language button",
+            extra={
+                "mode": "router",
+                "chat_id": getattr(getattr(message, "chat", None), "id", None),
+                "message_id": getattr(message, "message_id", None),
+                "handler": handler or "unknown",
+                "language_button_hint": language_button_hint,
+            },
+        )
         return True
 
     logger.info(
@@ -3556,8 +3575,15 @@ async def handle_message(message: Message) -> None:
         return
 
     text = (message.text or "").strip()
+    is_language_button = _is_language_button_text(text)
+    normalized_language_hint = _normalize_language_button_text(text) if is_language_button else None
     now = utcnow()
-    if not _should_process_message(message, handler="router"):
+    if not _should_process_message(
+        message,
+        handler="router",
+        allow_language_duplicate=is_language_button,
+        language_button_hint=normalized_language_hint,
+    ):
         return
     if await reset_state_if_inactive(message, now=now):
         return
@@ -3607,7 +3633,7 @@ async def handle_message(message: Message) -> None:
         await prompt_status(message, now=now)
         return
 
-    if _is_language_button_text(text):
+    if is_language_button:
         await cmd_lang(message, skip_dedup=True)
         return
 

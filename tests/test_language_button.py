@@ -25,6 +25,8 @@ def _collect_button_texts(markup: InlineKeyboardMarkup) -> list[str]:
         ("\u200b🌐 Language", "en"),
         ("\ufeff🌐 Language", "en"),
         ("\u200f🌐 Language", "en"),
+        ("\u2060🌐 Language", "en"),
+        ("🌐\u200d Language", "en"),
         ("🌐 言語設定", "ja"),
         ("🌐 Idioma", "pt"),
     ],
@@ -68,3 +70,22 @@ def test_language_reply_button_does_not_misfire(monkeypatch, tmp_path, free_text
     bot_main = import_bot_main(monkeypatch, tmp_path)
 
     assert bot_main._is_language_button_text(free_text) is False
+
+
+def test_language_button_bypasses_dedup(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+
+    from core import db as core_db
+
+    core_db.set_user_lang(555, "en")
+    bot_main.RECENT_HANDLED.clear()
+    bot_main.RECENT_HANDLED_ORDER.clear()
+
+    first = DummyMessage("🌐 Language", user_id=555, chat_id=555, message_id=5)
+    second = DummyMessage("🌐 Language", user_id=555, chat_id=555, message_id=5)
+
+    asyncio.run(bot_main.handle_message(first))
+    asyncio.run(bot_main.handle_message(second))
+
+    assert any(isinstance(markup, InlineKeyboardMarkup) for markup in first.reply_markups)
+    assert any(isinstance(markup, InlineKeyboardMarkup) for markup in second.reply_markups)
