@@ -2527,8 +2527,8 @@ async def cmd_start(message: Message) -> None:
 
 
 @dp.message(Command("lang"))
-async def cmd_lang(message: Message) -> None:
-    if not _should_process_message(message, handler="lang"):
+async def cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
+    if not skip_dedup and not _should_process_message(message, handler="lang"):
         return
 
     user_id = message.from_user.id if message.from_user else None
@@ -3608,7 +3608,7 @@ async def handle_message(message: Message) -> None:
         return
 
     if _is_language_button_text(text):
-        await cmd_lang(message)
+        await cmd_lang(message, skip_dedup=True)
         return
 
     spread_from_command, cleaned = parse_spread_command(text)

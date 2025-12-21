@@ -113,12 +113,27 @@ class DummyFromUser:
         self.id = user_id
 
 
+class DummyChat:
+    def __init__(self, chat_id: int):
+        self.id = chat_id
+
+
 class DummyMessage:
-    def __init__(self, text: str, user_id: int | None = None, successful_payment=None):
+    def __init__(
+        self,
+        text: str,
+        user_id: int | None = None,
+        successful_payment=None,
+        *,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+    ):
         self.text = text
         self.from_user = DummyFromUser(user_id) if user_id is not None else None
         self.answers: list[str] = []
         self.reply_markups: list[object] = []
+        self.chat = DummyChat(chat_id) if chat_id is not None else None
+        self.message_id = message_id
         if successful_payment is not None:
             self.successful_payment = successful_payment
 

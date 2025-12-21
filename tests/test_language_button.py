@@ -35,7 +35,7 @@ def test_language_reply_button_shows_picker(monkeypatch, tmp_path, button_text, 
     from core import db as core_db
 
     core_db.set_user_lang(999, user_lang)
-    message = DummyMessage(button_text, user_id=999)
+    message = DummyMessage(button_text, user_id=999, chat_id=999, message_id=1)
 
     asyncio.run(bot_main.handle_message(message))
 
