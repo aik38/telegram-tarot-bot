@@ -1051,18 +1051,39 @@ def _should_process_message(
     allow_language_duplicate: bool = False,
     language_button_hint: str | None = None,
 ) -> bool:
+    dedup_key = None
+    message_id = getattr(message, "message_id", None)
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    if message_id is not None and chat_id is not None:
+        dedup_key = f"{chat_id}:{message_id}"
+
     if _mark_recent_handled(message):
+        if allow_language_duplicate or language_button_hint:
+            logger.info(
+                "Language dedup check passed",
+                extra={
+                    "mode": "language",
+                    "route": "dedup",
+                    "dedup_key": dedup_key,
+                    "handler": handler or "unknown",
+                    "status": "accepted_new",
+                    "language_button_hint": language_button_hint,
+                },
+            )
         return True
 
     if allow_language_duplicate:
         logger.info(
             "Bypassing duplicate message for language button",
             extra={
-                "mode": "router",
-                "chat_id": getattr(getattr(message, "chat", None), "id", None),
-                "message_id": getattr(message, "message_id", None),
+                "mode": "language",
+                "route": "dedup",
+                "dedup_key": dedup_key,
+                "chat_id": chat_id,
+                "message_id": message_id,
                 "handler": handler or "unknown",
                 "language_button_hint": language_button_hint,
+                "status": "bypassed_duplicate",
             },
         )
         return True
@@ -1071,8 +1092,9 @@ def _should_process_message(
         "Skipping duplicate message",
         extra={
             "mode": "router",
-            "chat_id": getattr(getattr(message, "chat", None), "id", None),
-            "message_id": getattr(message, "message_id", None),
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "dedup_key": dedup_key,
             "handler": handler or "unknown",
         },
     )
@@ -1360,30 +1382,58 @@ def _has_language_button_prefix(text: str) -> bool:
     return normalized.lstrip().startswith(GLOBE_EMOJI_PREFIXES)
 
 
-def _is_language_button_text(text: str) -> bool:
+def _log_language_button_check(
+    *, raw: str, normalized: str, matched: bool, reason: str, hint: str | None
+) -> None:
+    logger.info(
+        "Language button check executed",
+        extra={
+            "mode": "language",
+            "route": "button_check",
+            "matched": matched,
+            "reason": reason,
+            "raw_preview": _preview_text(raw),
+            "normalized": normalized or None,
+            "hint": hint,
+        },
+    )
+
+
+def is_language_reply_button(text: str) -> tuple[bool, str | None]:
     raw = (text or "").strip()
     normalized = _normalize_language_button_text(raw)
     if not normalized:
-        return False
+        if _has_language_button_prefix(raw):
+            _log_language_button_check(raw=raw, normalized=normalized, matched=False, reason="empty", hint=None)
+        return False, None
 
-    candidates = set()
-    for label in LANGUAGE_BUTTON_LABELS.values():
-        normalized_label = _normalize_language_button_text(label)
-        candidates.add(label.strip())
-        candidates.add(normalized_label)
+    normalized_candidates = {_normalize_language_button_text(label) for label in LANGUAGE_BUTTON_LABELS.values()}
+    raw_candidates = {label.strip() for label in LANGUAGE_BUTTON_LABELS.values()}
+    if raw in raw_candidates or normalized in normalized_candidates:
+        hint = normalized or raw
+        _log_language_button_check(raw=raw, normalized=normalized, matched=True, reason="label_match", hint=hint)
+        return True, hint
 
-    if raw in candidates or normalized in candidates:
-        return True
+    if not _has_language_button_prefix(raw):
+        return False, None
 
-    if not _has_language_button_prefix(text):
-        return False
+    casefold_candidates = {candidate.casefold() for candidate in normalized_candidates}
+    casefold_candidates.update(label.casefold() for label in raw_candidates)
+    matched = normalized.casefold() in casefold_candidates
+    hint = normalized if matched else None
+    _log_language_button_check(
+        raw=raw,
+        normalized=normalized,
+        matched=matched,
+        reason="emoji_prefix" if matched else "emoji_prefix_miss",
+        hint=hint,
+    )
+    return matched, hint
 
-    for label in LANGUAGE_BUTTON_LABELS.values():
-        normalized_label = _normalize_language_button_text(label)
-        candidates.add(label.strip().casefold())
-        candidates.add(normalized_label.casefold())
 
-    return normalized.casefold() in candidates
+def _is_language_button_text(text: str) -> bool:
+    matched, _ = is_language_reply_button(text)
+    return matched
 
 
 def _extract_start_payload(message: Message) -> str | None:
@@ -2549,6 +2599,16 @@ async def cmd_start(message: Message) -> None:
 async def cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
     if not skip_dedup and not _should_process_message(message, handler="lang"):
         return
+    logger.info(
+        "Entered /lang handler",
+        extra={
+            "mode": "language",
+            "route": "command",
+            "user_id": getattr(getattr(message, "from_user", None), "id", None),
+            "skip_dedup": skip_dedup,
+            "message_id": getattr(message, "message_id", None),
+        },
+    )
 
     user_id = message.from_user.id if message.from_user else None
     if user_id is None:
@@ -3575,8 +3635,7 @@ async def handle_message(message: Message) -> None:
         return
 
     text = (message.text or "").strip()
-    is_language_button = _is_language_button_text(text)
-    normalized_language_hint = _normalize_language_button_text(text) if is_language_button else None
+    is_language_button, normalized_language_hint = is_language_reply_button(text)
     now = utcnow()
     if not _should_process_message(
         message,

@@ -69,7 +69,10 @@ def test_language_reply_button_shows_picker(monkeypatch, tmp_path, button_text, 
 def test_language_reply_button_does_not_misfire(monkeypatch, tmp_path, free_text):
     bot_main = import_bot_main(monkeypatch, tmp_path)
 
-    assert bot_main._is_language_button_text(free_text) is False
+    is_button, hint = bot_main.is_language_reply_button(free_text)
+
+    assert is_button is False
+    assert hint is None
 
 
 def test_language_button_bypasses_dedup(monkeypatch, tmp_path):
