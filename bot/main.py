@@ -1051,6 +1051,7 @@ def _should_process_message(
     allow_language_duplicate: bool = False,
     language_button_hint: str | None = None,
 ) -> bool:
+    # Telegram can resend identical language button taps; keep /lang reachable by letting those duplicates through.
     dedup_key = None
     message_id = getattr(message, "message_id", None)
     chat_id = getattr(getattr(message, "chat", None), "id", None)
@@ -1357,12 +1358,17 @@ def _strip_invisible(text: str) -> str:
     return "".join(stripped_chars)
 
 
+def _normalize_language_button_base(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\ufe0e", "").replace("\ufe0f", "")
+    # Telegram clients sometimes prepend invisible control characters on button taps; strip them to avoid false negatives.
+    return _strip_invisible(normalized)
+
+
 def _normalize_language_button_text(text: str) -> str:
     if not text:
         return ""
-    normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.replace("\ufe0e", "").replace("\ufe0f", "")
-    normalized = _strip_invisible(normalized)
+    normalized = _normalize_language_button_base(text)
     normalized = normalized.strip()
     for prefix in GLOBE_EMOJI_PREFIXES:
         if normalized.startswith(prefix):
@@ -1376,9 +1382,7 @@ def _normalize_language_button_text(text: str) -> str:
 def _has_language_button_prefix(text: str) -> bool:
     if not text:
         return False
-    normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.replace("\ufe0e", "").replace("\ufe0f", "")
-    normalized = _strip_invisible(normalized)
+    normalized = _normalize_language_button_base(text)
     return normalized.lstrip().startswith(GLOBE_EMOJI_PREFIXES)
 
 
