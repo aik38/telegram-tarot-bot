@@ -415,6 +415,9 @@ SENSITIVE_TOPICS: dict[str, list[str]] = {
     ],
 }
 SUPPORTED_LANGS = {"ja", "en", "pt"}
+LANGUAGE_BUTTON_LABELS = {
+    lang: t(lang, "MENU_LANGUAGE_LABEL") for lang in SUPPORTED_LANGS
+}
 
 
 def _get_theme_labels(lang: str) -> dict[str, str]:
@@ -1293,6 +1296,38 @@ def build_lang_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_EN"), callback_data="lang:set:en")],
             [InlineKeyboardButton(text=t(lang_code, "LANGUAGE_OPTION_PT"), callback_data="lang:set:pt")],
         ]
+    )
+
+
+def _normalize_language_button_text(text: str) -> str:
+    if not text:
+        return ""
+    normalized = text.strip()
+    # Remove common globe emojis and variation selectors at the start.
+    for prefix in ("🌐", "🌍", "🌎", "🌏"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    normalized = normalized.lstrip("\ufe0f").strip()
+    return normalized
+
+
+def _is_language_button_text(text: str) -> bool:
+    raw = (text or "").strip()
+    normalized = _normalize_language_button_text(raw)
+    if not normalized:
+        return False
+
+    candidates = set()
+    for label in LANGUAGE_BUTTON_LABELS.values():
+        candidates.add(label.strip())
+        candidates.add(_normalize_language_button_text(label))
+        candidates.add(_normalize_language_button_text(label).casefold())
+
+    return (
+        raw in candidates
+        or normalized in candidates
+        or normalized.casefold() in candidates
     )
 
 
@@ -3536,7 +3571,7 @@ async def handle_message(message: Message) -> None:
         await prompt_status(message, now=now)
         return
 
-    if text.startswith("🌐"):
+    if _is_language_button_text(text):
         await cmd_lang(message)
         return
 
