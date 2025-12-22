@@ -3598,7 +3598,6 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer, reply_markup=build_base_menu(user_id))
-        await restore_base_menu(message, user_id, lang)
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
