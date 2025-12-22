@@ -897,8 +897,8 @@ async def send_long_text(
     *,
     reply_to: int | None = None,
     edit_target: Message | None = None,
-    reply_markup_first: InlineKeyboardMarkup | None = None,
-    reply_markup_last: InlineKeyboardMarkup | None = None,
+    reply_markup_first: ReplyKeyboardMarkup | InlineKeyboardMarkup | ReplyKeyboardRemove | None = None,
+    reply_markup_last: ReplyKeyboardMarkup | InlineKeyboardMarkup | ReplyKeyboardRemove | None = None,
 ) -> None:
     chunks = split_text_for_sending(text)
     first_chunk, *rest = chunks
@@ -3383,7 +3383,7 @@ async def handle_tarot_reading(
                 formatted_answer, reply_markup=upgrade_markup or build_quick_menu(user_id)
             )
         await message.answer(
-            get_menu_prompt_text(lang_code),
+            "\u200b",
             reply_markup=build_base_menu(user_id),
         )
         event_success = True
@@ -3580,13 +3580,11 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
                 chat_id_value,
                 safe_answer,
                 reply_to=message.message_id,
+                reply_markup_first=build_base_menu(user_id),
+                reply_markup_last=build_base_menu(user_id),
             )
         else:
-            await message.answer(safe_answer)
-        await message.answer(
-            get_menu_prompt_text(lang),
-            reply_markup=build_base_menu(user_id),
-        )
+            await message.answer(safe_answer, reply_markup=build_base_menu(user_id))
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
