@@ -1492,6 +1492,16 @@ def build_quick_menu(
     return ensure_quick_menu(reply_markup=reply_markup, lang=get_user_lang_or_default(user_id))
 
 
+def get_menu_prompt_text(lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    prompts = {
+        "ja": "下のボタンから次を選べます👇",
+        "en": "Choose from the buttons below 👇",
+        "pt": "Escolha pelos botões abaixo 👇",
+    }
+    return prompts.get(lang_code, prompts["ja"])
+
+
 def get_chat_id(message: Message) -> int | None:
     chat = getattr(message, "chat", None)
     if chat and getattr(chat, "id", None) is not None:
@@ -1800,6 +1810,7 @@ async def execute_tarot_request(
     short_response = False
     allowed = True
     effective_theme = theme or get_tarot_theme(user_id)
+    free_menu_prompt = False
 
     if await respond_with_safety_notice(message, user_query):
         logger.info(
@@ -1822,6 +1833,7 @@ async def execute_tarot_request(
             allowed, short_response, user = _evaluate_one_oracle_access(
                 user=user, user_id=user_id, now=now
             )
+            free_menu_prompt = not effective_has_pass(user_id, user, now=now)
     if not allowed:
         paywall_triggered = True
         await message.answer(
@@ -1887,6 +1899,8 @@ async def execute_tarot_request(
         spread=spread_to_use,
         guidance_note=guidance_note or build_paid_hint(user_query),
         short_response=short_response,
+        theme=effective_theme,
+        show_menu_prompt=free_menu_prompt,
     )
 
 
@@ -3230,6 +3244,7 @@ async def handle_tarot_reading(
     guidance_note: str | None = None,
     short_response: bool = False,
     theme: str | None = None,
+    show_menu_prompt: bool = False,
 ) -> None:
     total_start = perf_counter()
     openai_latency_ms: float | None = None
@@ -3372,6 +3387,11 @@ async def handle_tarot_reading(
             await message.answer(
                 formatted_answer, reply_markup=upgrade_markup or build_quick_menu(user_id)
             )
+        if show_menu_prompt and can_use_bot and chat_id is not None:
+            await message.answer(
+                get_menu_prompt_text(lang_code),
+                reply_markup=build_base_menu(user_id),
+            )
         event_success = True
     except Exception:
         logger.exception("Unexpected error during tarot reading")
@@ -3478,6 +3498,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     paywall_triggered = False
     event_success = False
     event_error: str | None = None
+    show_menu_prompt = False
 
     if await respond_with_safety_notice(message, user_query):
         logger.info(
@@ -3498,6 +3519,7 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         trial_active = _is_in_general_chat_trial(user, now)
         out_of_quota = user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY
         has_pass = effective_has_pass(user_id, user, now=now)
+        show_menu_prompt = not has_pass
 
         if (trial_active and out_of_quota and not has_pass) or (
             not trial_active and not has_pass
@@ -3573,6 +3595,11 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer)
+        if show_menu_prompt:
+            await message.answer(
+                get_menu_prompt_text(lang),
+                reply_markup=build_base_menu(user_id),
+            )
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
