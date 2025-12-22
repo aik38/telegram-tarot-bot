@@ -118,7 +118,6 @@ from bot.texts.ja import HELP_TEXT_TEMPLATE
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 client = OpenAI(api_key=OPENAI_API_KEY)
-NON_CONSULT_OUT_OF_QUOTA_MESSAGE = t("ja", "NON_CONSULT_OUT_OF_QUOTA_MESSAGE")
 
 logger = logging.getLogger(__name__)
 dp.message.middleware(ThrottleMiddleware(min_interval_sec=THROTTLE_MESSAGE_INTERVAL_SEC))
@@ -1810,7 +1809,6 @@ async def execute_tarot_request(
     short_response = False
     allowed = True
     effective_theme = theme or get_tarot_theme(user_id)
-    free_menu_prompt = False
 
     if await respond_with_safety_notice(message, user_query):
         logger.info(
@@ -1833,7 +1831,6 @@ async def execute_tarot_request(
             allowed, short_response, user = _evaluate_one_oracle_access(
                 user=user, user_id=user_id, now=now
             )
-            free_menu_prompt = not effective_has_pass(user_id, user, now=now)
     if not allowed:
         paywall_triggered = True
         await message.answer(
@@ -1900,7 +1897,6 @@ async def execute_tarot_request(
         guidance_note=guidance_note or build_paid_hint(user_query),
         short_response=short_response,
         theme=effective_theme,
-        show_menu_prompt=free_menu_prompt,
     )
 
 
@@ -3244,7 +3240,6 @@ async def handle_tarot_reading(
     guidance_note: str | None = None,
     short_response: bool = False,
     theme: str | None = None,
-    show_menu_prompt: bool = False,
 ) -> None:
     total_start = perf_counter()
     openai_latency_ms: float | None = None
@@ -3387,11 +3382,10 @@ async def handle_tarot_reading(
             await message.answer(
                 formatted_answer, reply_markup=upgrade_markup or build_quick_menu(user_id)
             )
-        if show_menu_prompt and can_use_bot and chat_id is not None:
-            await message.answer(
-                get_menu_prompt_text(lang_code),
-                reply_markup=build_base_menu(user_id),
-            )
+        await message.answer(
+            get_menu_prompt_text(lang_code),
+            reply_markup=build_base_menu(user_id),
+        )
         event_success = True
     except Exception:
         logger.exception("Unexpected error during tarot reading")
@@ -3498,7 +3492,6 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
     paywall_triggered = False
     event_success = False
     event_error: str | None = None
-    show_menu_prompt = False
 
     if await respond_with_safety_notice(message, user_query):
         logger.info(
@@ -3519,16 +3512,11 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         trial_active = _is_in_general_chat_trial(user, now)
         out_of_quota = user.general_chat_count_today >= FREE_GENERAL_CHAT_PER_DAY
         has_pass = effective_has_pass(user_id, user, now=now)
-        show_menu_prompt = not has_pass
 
         if (trial_active and out_of_quota and not has_pass) or (
             not trial_active and not has_pass
         ):
             paywall_triggered = True
-            if not consult_intent:
-                await message.answer(t(lang, "NON_CONSULT_OUT_OF_QUOTA_MESSAGE"))
-                return
-
             full_notice = _should_show_general_chat_full_notice(user, now)
             block_message = _build_consult_block_message(
                 trial_active=trial_active, short=not full_notice
@@ -3595,11 +3583,10 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer)
-        if show_menu_prompt:
-            await message.answer(
-                get_menu_prompt_text(lang),
-                reply_markup=build_base_menu(user_id),
-            )
+        await message.answer(
+            get_menu_prompt_text(lang),
+            reply_markup=build_base_menu(user_id),
+        )
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
