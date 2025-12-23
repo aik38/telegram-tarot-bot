@@ -976,58 +976,90 @@ def log_app_event(
 
 def get_daily_stats(*, days: int = 7, now: datetime | None = None) -> list[dict[str, object]]:
     now = now or datetime.now(timezone.utc)
-    start_date = _usage_date(now) - timedelta(days=days - 1)
-    date_keys = [
-        (start_date + timedelta(days=offset)).isoformat()
-        for offset in range(days)
-    ]
-    stats: dict[str, dict[str, object]] = {
-        date_key: {
-            "date": date_key,
-            "tarot": 0,
-            "consult": 0,
-            "errors": 0,
-            "payments": 0,
-        }
-        for date_key in date_keys
-    }
+    days = max(1, min(14, days))
+    end_date = _usage_date(now)
+    start_date = end_date - timedelta(days=days - 1)
+    day_jst_expr = "date(replace(substr(created_at, 1, 19), 'T', ' '), '+9 hours')"
+
     with _connect() as conn:
-        event_rows = conn.execute(
-            """
-            SELECT substr(created_at, 1, 10) AS day, event_type, COUNT(*) AS count
-            FROM app_events
-            WHERE date(created_at) >= date(?)
-            GROUP BY day, event_type
+        rows = conn.execute(
+            f"""
+            WITH RECURSIVE days(day) AS (
+                SELECT date(?) AS day
+                UNION ALL
+                SELECT date(day, '+1 day')
+                FROM days
+                WHERE day < date(?)
+            ),
+            event_base AS (
+                SELECT
+                    {day_jst_expr} AS day_jst,
+                    event_type,
+                    user_id
+                FROM app_events
+                WHERE {day_jst_expr} BETWEEN date(?) AND date(?)
+                  AND event_type IN ('consult', 'tarot', 'error')
+            ),
+            usage_events AS (
+                SELECT
+                    day_jst,
+                    SUM(event_type = 'consult') AS consult,
+                    SUM(event_type = 'tarot') AS tarot,
+                    COUNT(*) AS uses,
+                    COUNT(DISTINCT user_id) AS dau
+                FROM event_base
+                WHERE event_type IN ('consult', 'tarot')
+                GROUP BY day_jst
+            ),
+            error_events AS (
+                SELECT day_jst, COUNT(*) AS errors
+                FROM event_base
+                WHERE event_type = 'error'
+                GROUP BY day_jst
+            ),
+            payment_base AS (
+                SELECT
+                    {day_jst_expr} AS day_jst,
+                    stars
+                FROM payments
+                WHERE {day_jst_expr} BETWEEN date(?) AND date(?)
+                  AND COALESCE(status, 'paid') = 'paid'
+                  AND (refunded_at IS NULL OR refunded_at = '')
+            ),
+            payment_stats AS (
+                SELECT
+                    day_jst,
+                    COUNT(*) AS payments,
+                    COALESCE(SUM(stars), 0) AS stars_sales
+                FROM payment_base
+                GROUP BY day_jst
+            )
+            SELECT
+                days.day AS date,
+                COALESCE(usage_events.consult, 0) AS consult,
+                COALESCE(usage_events.tarot, 0) AS tarot,
+                COALESCE(usage_events.uses, 0) AS uses,
+                COALESCE(usage_events.dau, 0) AS dau,
+                COALESCE(payment_stats.payments, 0) AS payments,
+                COALESCE(payment_stats.stars_sales, 0) AS stars_sales,
+                COALESCE(error_events.errors, 0) AS errors
+            FROM days
+            LEFT JOIN usage_events ON usage_events.day_jst = days.day
+            LEFT JOIN error_events ON error_events.day_jst = days.day
+            LEFT JOIN payment_stats ON payment_stats.day_jst = days.day
+            ORDER BY date(days.day) DESC
             """,
-            (start_date.isoformat(),),
-        ).fetchall()
-        payment_rows = conn.execute(
-            """
-            SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count
-            FROM payments
-            WHERE date(created_at) >= date(?)
-            GROUP BY day
-            """,
-            (start_date.isoformat(),),
+            (
+                start_date.isoformat(),
+                end_date.isoformat(),
+                start_date.isoformat(),
+                end_date.isoformat(),
+                start_date.isoformat(),
+                end_date.isoformat(),
+            ),
         ).fetchall()
 
-    for row in event_rows:
-        day = row["day"]
-        if day not in stats:
-            continue
-        if row["event_type"] == "tarot":
-            stats[day]["tarot"] = row["count"]
-        elif row["event_type"] == "consult":
-            stats[day]["consult"] = row["count"]
-        elif row["event_type"] == "error":
-            stats[day]["errors"] = row["count"]
-
-    for row in payment_rows:
-        day = row["day"]
-        if day in stats:
-            stats[day]["payments"] = row["count"]
-
-    return sorted(stats.values(), key=lambda item: item["date"], reverse=True)
+    return [dict(row) for row in rows]
 
 
 def _backfill_user_columns(conn: sqlite3.Connection) -> None:

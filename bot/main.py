@@ -3085,11 +3085,35 @@ async def cmd_admin(message: Message) -> None:
                 await message.answer("日数は数字で指定してください。例: /admin stats 7")
                 return
         stats_rows = get_daily_stats(days=days)
+        if not stats_rows:
+            await message.answer("日次集計を取得できませんでした。")
+            return
+
+        today_jst = _usage_today(utcnow()).isoformat()
+        stats_by_date = {row["date"]: row for row in stats_rows}
+        today_stats = stats_by_date.get(today_jst, stats_rows[0])
+        sorted_rows = sorted(stats_rows, key=lambda row: row["date"])
         lines = [
-            f"{row['date']}: tarot={row['tarot']} consult={row['consult']} payments={row['payments']} errors={row['errors']}"
-            for row in stats_rows
+            "📊 Admin stats (JST)",
+            (
+                f"Today {today_stats['date']}: "
+                f"DAU={today_stats.get('dau', 0)} uses={today_stats.get('uses', 0)} "
+                f"⭐stars={today_stats.get('stars_sales', 0)} (tx={today_stats.get('payments', 0)}) "
+                f"tarot={today_stats.get('tarot', 0)} consult={today_stats.get('consult', 0)} errors={today_stats.get('errors', 0)}"
+            ),
+            f"---- last {days} days ----",
         ]
-        await message.answer("日次の簡易集計です。\n" + "\n".join(lines))
+        lines.extend(
+            [
+                (
+                    f"{row['date']}: dau={row.get('dau', 0)} uses={row.get('uses', 0)} "
+                    f"stars={row.get('stars_sales', 0)} tx={row.get('payments', 0)} "
+                    f"tarot={row.get('tarot', 0)} consult={row.get('consult', 0)} errors={row.get('errors', 0)}"
+                )
+                for row in sorted_rows
+            ]
+        )
+        await message.answer("\n".join(lines))
         return
 
     if subcommand not in {"grant", "revoke"}:
