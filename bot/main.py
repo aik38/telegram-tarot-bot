@@ -1630,7 +1630,6 @@ def build_tarot_theme_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMark
 
 # --- Share funnel (Step3) ---
 BOT_PUBLIC_LINK = "https://t.me/tarot78_catbot"
-BOT_START_LINK = "https://t.me/tarot78_catbot?start=from_share"
 
 SHARE_TEXT_BY_LANG: dict[str, str] = {
     "en": "Daily Tarot in 1 tap 🐈✨ Try @tarot78_catbot",
@@ -1654,7 +1653,6 @@ def build_share_start_keyboard(*, lang: str | None = "en") -> InlineKeyboardMark
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="Share", url=build_share_url(lang=lang)),
-                InlineKeyboardButton(text="Start", url=BOT_START_LINK),
             ]
         ]
     )
@@ -1669,6 +1667,33 @@ def merge_inline_keyboards(*markups: InlineKeyboardMarkup | None) -> InlineKeybo
         if kb:
             rows.extend(kb)
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+def merge_inline_keyboards_compact(
+    base_markup: InlineKeyboardMarkup | None,
+    extra_markup: InlineKeyboardMarkup | None,
+) -> InlineKeyboardMarkup | None:
+    if not base_markup:
+        return extra_markup
+    if not extra_markup:
+        return base_markup
+
+    base_rows = list(getattr(base_markup, "inline_keyboard", []) or [])
+    extra_rows = list(getattr(extra_markup, "inline_keyboard", []) or [])
+
+    if (
+        base_rows
+        and len(base_rows[-1]) == 1
+        and len(extra_rows) == 1
+        and len(extra_rows[0]) == 1
+    ):
+        merged_rows = [list(row) for row in base_rows]
+        merged_rows[-1] = merged_rows[-1] + extra_rows[0]
+        return InlineKeyboardMarkup(inline_keyboard=merged_rows)
+
+    merged_rows = list(base_rows)
+    merged_rows.extend(extra_rows)
+    return InlineKeyboardMarkup(inline_keyboard=merged_rows) if merged_rows else None
 
 
 def build_upgrade_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMarkup:
@@ -3455,7 +3480,7 @@ async def handle_tarot_reading(
         )
         upgrade_markup = build_upgrade_keyboard(lang=lang_code) if spread_to_use.id == ONE_CARD.id else None
         share_markup = build_share_start_keyboard(lang=lang_code)
-        final_markup = merge_inline_keyboards(upgrade_markup, share_markup)
+        final_markup = merge_inline_keyboards_compact(upgrade_markup, share_markup)
         if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
