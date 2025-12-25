@@ -8,6 +8,7 @@ import unicodedata
 from collections import deque
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 from time import monotonic, perf_counter
 from typing import Any, Awaitable, Callable, Iterable, Sequence
 
@@ -1625,6 +1626,49 @@ def build_tarot_theme_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMark
             [InlineKeyboardButton(text=t(lang_code, "TAROT_THEME_BUTTON_LIFE"), callback_data="tarot_theme:life")],
         ]
     )
+
+
+# --- Share funnel (Step3) ---
+BOT_PUBLIC_LINK = "https://t.me/tarot78_catbot"
+BOT_START_LINK = "https://t.me/tarot78_catbot?start=from_share"
+
+SHARE_TEXT_BY_LANG: dict[str, str] = {
+    "en": "Daily Tarot in 1 tap 🐈✨ Try @tarot78_catbot",
+    "ja": "1タップで今日のタロット🐈✨ 試してみて → @tarot78_catbot",
+    "pt": "Tarô diário em 1 toque 🐈✨ Experimente @tarot78_catbot",
+}
+
+
+def build_share_url(*, lang: str | None = "en") -> str:
+    try:
+        lang_code = normalize_lang(lang or "en")
+    except Exception:
+        lang_code = (lang or "en").lower()
+    text = SHARE_TEXT_BY_LANG.get(lang_code, SHARE_TEXT_BY_LANG["en"])
+    query = urlencode({"url": BOT_PUBLIC_LINK, "text": text})
+    return f"https://t.me/share/url?{query}"
+
+
+def build_share_start_keyboard(*, lang: str | None = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Share", url=build_share_url(lang=lang)),
+                InlineKeyboardButton(text="Start", url=BOT_START_LINK),
+            ]
+        ]
+    )
+
+
+def merge_inline_keyboards(*markups: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup | None:
+    rows: list[list[InlineKeyboardButton]] = []
+    for markup in markups:
+        if not markup:
+            continue
+        kb = getattr(markup, "inline_keyboard", None)
+        if kb:
+            rows.extend(kb)
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 def build_upgrade_keyboard(*, lang: str | None = "ja") -> InlineKeyboardMarkup:
@@ -3410,17 +3454,19 @@ async def handle_tarot_reading(
             },
         )
         upgrade_markup = build_upgrade_keyboard(lang=lang_code) if spread_to_use.id == ONE_CARD.id else None
+        share_markup = build_share_start_keyboard(lang=lang_code)
+        final_markup = merge_inline_keyboards(upgrade_markup, share_markup)
         if can_use_bot and chat_id is not None:
             await send_long_text(
                 chat_id,
                 formatted_answer,
                 reply_to=getattr(message, "message_id", None),
                 reply_markup_first=build_quick_menu(user_id),
-                reply_markup_last=upgrade_markup,
+                reply_markup_last=final_markup,
             )
         else:
             await message.answer(
-                formatted_answer, reply_markup=upgrade_markup or build_quick_menu(user_id)
+                formatted_answer, reply_markup=final_markup or build_quick_menu(user_id)
             )
         await restore_base_menu(message, user_id, lang_code)
         event_success = True
@@ -3622,6 +3668,20 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer, reply_markup=build_base_menu(user_id))
+        share_markup = build_share_start_keyboard(lang=lang)
+        cta_text = "Share this bot 👇"
+        try:
+            if can_use_bot and chat_id_value is not None:
+                await bot.send_message(
+                    chat_id_value,
+                    cta_text,
+                    reply_to_message_id=message.message_id,
+                    reply_markup=share_markup,
+                )
+            else:
+                await message.answer(cta_text, reply_markup=share_markup)
+        except Exception:
+            await message.answer(cta_text, reply_markup=share_markup)
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
