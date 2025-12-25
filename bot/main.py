@@ -3668,20 +3668,6 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
             )
         else:
             await message.answer(safe_answer, reply_markup=build_base_menu(user_id))
-        share_markup = build_share_start_keyboard(lang=lang)
-        cta_text = "Share this bot 👇"
-        try:
-            if can_use_bot and chat_id_value is not None:
-                await bot.send_message(
-                    chat_id_value,
-                    cta_text,
-                    reply_to_message_id=message.message_id,
-                    reply_markup=share_markup,
-                )
-            else:
-                await message.answer(cta_text, reply_markup=share_markup)
-        except Exception:
-            await message.answer(cta_text, reply_markup=share_markup)
         event_success = True
     except Exception:
         logger.exception("Unexpected error during general chat")
