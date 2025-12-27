@@ -1,0 +1,79 @@
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+CREATE TABLE IF NOT EXISTS identities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  UNIQUE (provider, provider_user_id),
+  FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  currency TEXT,
+  amount_cents INTEGER,
+  interval TEXT,
+  stripe_price_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+CREATE TABLE IF NOT EXISTS entitlements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL,
+  plan_id INTEGER NOT NULL,
+  active_from TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  active_until TEXT,
+  FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS stripe_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL,
+  plan_id INTEGER,
+  provider_subscription_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  canceled_at TEXT,
+  FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  provider_payment_id TEXT,
+  status TEXT,
+  received_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  event_type TEXT NOT NULL,
+  payload TEXT,
+  received_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+CREATE TABLE IF NOT EXISTS usage_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER,
+  event_type TEXT NOT NULL,
+  occurred_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  metadata TEXT,
+  FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE SET NULL
+);
