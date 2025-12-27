@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from api.db import apply_migrations
 
-from api.routers import common_backend, line_prince, stripe, tg_prince
+from api.routers import common_backend, line_webhook, stripe, tg_prince
 
 app = FastAPI()
 
@@ -17,7 +17,7 @@ def run_migrations() -> None:
     apply_migrations()
 
 
-app.include_router(line_prince.router)
+app.include_router(line_webhook.router)
 app.include_router(stripe.router)
 app.include_router(tg_prince.router)
 app.include_router(common_backend.router)

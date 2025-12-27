@@ -26,6 +26,10 @@ pip install -r requirements.txt
 - `.env.example` を `.env` にコピーして値を埋めてください。
 - `SUPPORT_EMAIL`: 利用規約やサポート案内に表示するメールアドレス。未設定時は `hasegawaarisa1@gmail.com` が使われますが、ダミー表記を避けるため環境変数で上書きする運用を推奨します。
 - `THROTTLE_MESSAGE_INTERVAL_SEC` / `THROTTLE_CALLBACK_INTERVAL_SEC`: テキスト送信・ボタン連打それぞれの最小間隔（秒）。未設定時は 1.2s / 0.8s のままです。負荷試験時に環境変数で調整してください。
+- LINE Webhook 用（LINE Messaging APIを利用する場合）
+  - `LINE_CHANNEL_SECRET`: チャネルシークレット。署名検証に使用します。
+  - `LINE_CHANNEL_ACCESS_TOKEN`: チャネルアクセストークン。LINE返信APIを呼ぶ際に使用します。
+  - `ADMIN_LINE_USER_IDS`: 無料枠消費をスキップするLINEユーザーIDのカンマ区切りリスト（管理者向け）。
 
 ### シークレット運用ルール
 
@@ -52,6 +56,12 @@ pip install -r requirements.txt
 
 - Bot 起動: `python -m bot.main`
 - API 起動: `uvicorn api.main:app --reload --port 8000`
+- LINE Webhook（開発向け）:
+  1. `.env` に `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` / `ADMIN_LINE_USER_IDS` を設定。
+  2. API を起動: `uvicorn api.main:app --reload --port 8000`
+  3. 別ターミナルで `ngrok http 8000` を実行し、発行された HTTPS URL を LINE Developers の Webhook URL に設定（例: `https://<ngrok-id>.ngrok.io/webhooks/line`）。検証ボタンで 200 OK が返ることを確認。
+  4. Messaging API > チャネル基本設定で Webhook を有効化し、チャネルアクセストークンを発行。
+  5. 友だち追加後にメッセージを送ると、無料枠が残っている場合はオウム返し、枠がない場合は月間無料枠終了メッセージが返ります（占いロジックは別途連携予定）。
 
 ### ログ出力
 
