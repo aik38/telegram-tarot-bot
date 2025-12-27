@@ -57,7 +57,9 @@ def test_general_chat_trial_limits(monkeypatch, tmp_path):
 
     assert len(first.answers) == 1
     assert len(second.answers) == 1
-    assert third.answers == [bot_main.NON_CONSULT_OUT_OF_QUOTA_MESSAGE]
+    assert third.answers == [
+        bot_main._build_consult_block_message(trial_active=True, short=False)
+    ]
 
 
 def test_general_chat_block_notice_cooldown(monkeypatch, tmp_path):
@@ -102,7 +104,9 @@ def test_general_chat_requires_pass_after_trial(monkeypatch, tmp_path):
     message = DummyMessage("6日目の雑談", user_id=1)
     asyncio.run(bot_main.handle_message(message))
 
-    assert message.answers == [bot_main.NON_CONSULT_OUT_OF_QUOTA_MESSAGE]
+    assert message.answers == [
+        bot_main._build_consult_block_message(trial_active=False, short=False)
+    ]
 
 
 def test_one_oracle_limit_triggers_short_response(monkeypatch, tmp_path):
@@ -113,7 +117,12 @@ def test_one_oracle_limit_triggers_short_response(monkeypatch, tmp_path):
     calls: list[bool] = []
 
     async def fake_tarot(
-        message, user_query: str, spread=None, guidance_note=None, short_response=False
+        message,
+        user_query: str,
+        spread=None,
+        guidance_note=None,
+        short_response=False,
+        theme=None,
     ):
         calls.append(short_response)
 
@@ -141,7 +150,12 @@ def test_one_oracle_limit_after_trial(monkeypatch, tmp_path):
     calls: list[bool] = []
 
     async def fake_tarot(
-        message, user_query: str, spread=None, guidance_note=None, short_response=False
+        message,
+        user_query: str,
+        spread=None,
+        guidance_note=None,
+        short_response=False,
+        theme=None,
     ):
         calls.append(short_response)
 
@@ -210,7 +224,12 @@ def test_admin_bypass_one_oracle_limits(monkeypatch, tmp_path):
     calls: list[bool] = []
 
     async def fake_tarot(
-        message, user_query: str, spread=None, guidance_note=None, short_response=False
+        message,
+        user_query: str,
+        spread=None,
+        guidance_note=None,
+        short_response=False,
+        theme=None,
     ):
         calls.append(short_response)
 

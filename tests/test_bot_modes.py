@@ -173,7 +173,12 @@ def test_love1_command_is_alias(monkeypatch, tmp_path):
     calls: list[tuple[str, object]] = []
 
     async def fake_handle_tarot(
-        message, user_query: str, spread, guidance_note=None, short_response=False
+        message,
+        user_query: str,
+        spread,
+        guidance_note=None,
+        short_response=False,
+        theme=None,
     ):
         calls.append((user_query, spread))
 
