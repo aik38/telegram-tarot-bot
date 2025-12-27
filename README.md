@@ -29,7 +29,10 @@ pip install -r requirements.txt
 - LINE Webhook 用（LINE Messaging APIを利用する場合）
   - `LINE_CHANNEL_SECRET`: チャネルシークレット。署名検証に使用します。
   - `LINE_CHANNEL_ACCESS_TOKEN`: チャネルアクセストークン。LINE返信APIを呼ぶ際に使用します。
-  - `ADMIN_LINE_USER_IDS`: 無料枠消費をスキップするLINEユーザーIDのカンマ区切りリスト（管理者向け）。
+  - `LINE_ADMIN_USER_IDS`: 管理者だけが「今日の星」「ミニ占い」を実行できます。カンマ区切りで指定。
+  - `LINE_VERIFY_SIGNATURE`: 署名検証の ON/OFF（デフォルトは `true`。開発でのみ OFF を想定）。
+  - `PRINCE_SYSTEM_PROMPT`: 「星の王子さま」人格のシステムプロンプト上書き用。未設定時はデフォルトの短め日本語プロンプトを利用。
+  - `LINE_OPENAI_MODEL`: LINE返信用の OpenAI モデル指定（デフォルト `gpt-4o-mini`）。
 
 ### シークレット運用ルール
 
@@ -57,11 +60,20 @@ pip install -r requirements.txt
 - Bot 起動: `python -m bot.main`
 - API 起動: `uvicorn api.main:app --reload --port 8000`
 - LINE Webhook（開発向け）:
-  1. `.env` に `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` / `ADMIN_LINE_USER_IDS` を設定。
+  1. `.env` に `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_ADMIN_USER_IDS` を設定。署名検証を暫定的に外す場合のみ `LINE_VERIFY_SIGNATURE=false` を追加。
   2. API を起動: `uvicorn api.main:app --reload --port 8000`
-  3. 別ターミナルで `ngrok http 8000` を実行し、発行された HTTPS URL を LINE Developers の Webhook URL に設定（例: `https://<ngrok-id>.ngrok.io/webhooks/line`）。検証ボタンで 200 OK が返ることを確認。
+  3. 別ターミナルで `ngrok http 8000` を実行し、発行された HTTPS URL を LINE Developers の Webhook URL に設定（例: `https://<ngrok-id>.ngrok.io/line/webhook`）。検証ボタンで 200 OK が返ることを確認。
   4. Messaging API > チャネル基本設定で Webhook を有効化し、チャネルアクセストークンを発行。
-  5. 友だち追加後にメッセージを送ると、無料枠が残っている場合はオウム返し、枠がない場合は月間無料枠終了メッセージが返ります（占いロジックは別途連携予定）。
+  5. 友だち追加後にメッセージを送ると、会話モードで「星の王子さま」人格が応答し、無料枠が尽きた場合は上限メッセージを返します。
+
+### LINE開発の最短手順
+
+1. 必要な環境変数をセット：`LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` / `OPENAI_API_KEY`（必要に応じて `PRINCE_SYSTEM_PROMPT` や `LINE_ADMIN_USER_IDS`）。
+2. API を起動：`uvicorn api.main:app --reload --port 8000`
+3. `ngrok http 8000` で公開し、LINE Developers の Webhook URL に `https://<ngrok-id>.ngrok.io/line/webhook` を設定。
+4. LINE から `/whoami` を送信し、返ってきた `userId` を `LINE_ADMIN_USER_IDS` に追記して API を再起動（管理者限定メニュー用）。
+5. 本番同等で署名検証を行う（デフォルト ON）。開発時のみ `LINE_VERIFY_SIGNATURE=false` を利用可能。
+6. 実機で 10 往復ほどメッセージを送り、「話す」（星の王子さま人格）と管理者限定の「今日の星」「ミニ占い」が期待通り返ることを確認。
 
 ### ログ出力
 
