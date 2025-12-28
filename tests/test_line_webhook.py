@@ -17,6 +17,8 @@ class StubDB:
         self.consume_allowed = consume_allowed
         self.resolve_calls: list[tuple[str, str]] = []
         self.consume_calls: list[dict[str, Any]] = []
+        self.increment_calls: list[dict[str, Any]] = []
+        self.message_counts: dict[int, int] = {}
 
     def resolve_identity(self, provider: str, provider_user_id: str) -> tuple[int, int]:
         self.resolve_calls.append((provider, provider_user_id))
@@ -34,6 +36,23 @@ class StubDB:
             }
         )
         return self.consume_allowed, 0
+
+    def increment_line_message_usage(
+        self, account_id: int, user_id: str, request_id: str, monthly_limit: int
+    ) -> tuple[bool, int]:
+        self.message_counts[account_id] = self.message_counts.get(account_id, 0) + 1
+        remaining = max(0, monthly_limit - self.message_counts[account_id])
+        allowed = self.message_counts[account_id] <= monthly_limit
+        self.increment_calls.append(
+            {
+                "account_id": account_id,
+                "user_id": user_id,
+                "request_id": request_id,
+                "monthly_limit": monthly_limit,
+                "remaining": remaining,
+            }
+        )
+        return allowed, remaining
 
 
 class StubLineClient:
@@ -57,6 +76,7 @@ class StubPrinceChatService(PrinceChatService):
 def line_test_app(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "secret")
     monkeypatch.setenv("LINE_CHANNEL_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("LINE_FREE_MESSAGES_PER_MONTH", "30")
     monkeypatch.delenv("LINE_ADMIN_USER_IDS", raising=False)
     monkeypatch.delenv("ADMIN_LINE_USER_IDS", raising=False)
 
@@ -87,7 +107,7 @@ def make_signed_body(secret: str, payload: dict[str, Any]) -> tuple[bytes, dict[
 
 
 def test_whoami_returns_user_id(line_test_app) -> None:
-    client, db, stub_client, _ = line_test_app
+    client, db, stub_client, stub_prince = line_test_app
     payload = {
         "events": [
             {
@@ -103,7 +123,16 @@ def test_whoami_returns_user_id(line_test_app) -> None:
     response = client.post("/line/webhook", content=body, headers=headers)
 
     assert response.status_code == 200
-    assert db.consume_calls == []
+    assert db.increment_calls == [
+        {
+            "account_id": 100,
+            "user_id": "user-1",
+            "request_id": "line.monthly:user-1:m-1",
+            "monthly_limit": 30,
+            "remaining": 29,
+        }
+    ]
+    assert stub_prince.calls == []
     assert stub_client.replies == [("reply-1", "LINE userId: user-1")]
 
 
@@ -126,7 +155,7 @@ def test_admin_feature_available_only_for_admin(monkeypatch: pytest.MonkeyPatch,
     response = client.post("/line/webhook", content=body, headers=headers)
 
     assert response.status_code == 200
-    assert db.consume_calls == []
+    assert db.increment_calls == []
     assert "星のきらめき" in stub_client.replies[0][1]
 
 
@@ -147,11 +176,19 @@ def test_general_users_get_coming_soon_message(line_test_app) -> None:
     response = client.post("/line/webhook", content=body, headers=headers)
 
     assert response.status_code == 200
-    assert db.consume_calls == []
+    assert db.increment_calls == [
+        {
+            "account_id": 100,
+            "user_id": "user-3",
+            "request_id": "line.monthly:user-3:m-3",
+            "monthly_limit": 30,
+            "remaining": 29,
+        }
+    ]
     assert stub_client.replies == [("reply-3", "近日公開。今は「話す」だけ先行公開中です。")]
 
 
-def test_entitlement_blocks_and_prince_chat_called(line_test_app) -> None:
+def test_message_allows_and_prince_chat_called(line_test_app) -> None:
     client, db, stub_client, stub_prince = line_test_app
     payload = {
         "events": [
@@ -168,12 +205,13 @@ def test_entitlement_blocks_and_prince_chat_called(line_test_app) -> None:
     response = client.post("/line/webhook", content=body, headers=headers)
 
     assert response.status_code == 200
-    assert db.consume_calls == [
+    assert db.increment_calls == [
         {
             "account_id": 100,
-            "feature": "line.text",
-            "units": 1,
-            "request_id": "line:user-4:m-4",
+            "user_id": "user-4",
+            "request_id": "line.monthly:user-4:m-4",
+            "monthly_limit": 30,
+            "remaining": 29,
         }
     ]
     assert stub_prince.calls == ["こんにちは"]
@@ -201,14 +239,14 @@ def test_invalid_signature_returns_unauthorized(line_test_app) -> None:
     response = client.post("/line/webhook", content=body, headers=headers)
 
     assert response.status_code == 401
-    assert db.consume_calls == []
+    assert db.increment_calls == []
     assert stub_prince.calls == []
     assert stub_client.replies == []
 
 
-def test_denied_entitlement_returns_limit_message(line_test_app) -> None:
-    client, db, stub_client, _ = line_test_app
-    db.consume_allowed = False
+def test_denied_monthly_quota_returns_limit_message(monkeypatch: pytest.MonkeyPatch, line_test_app) -> None:
+    monkeypatch.setenv("LINE_FREE_MESSAGES_PER_MONTH", "1")
+    client, db, stub_client, stub_prince = line_test_app
     payload = {
         "events": [
             {
@@ -221,12 +259,45 @@ def test_denied_entitlement_returns_limit_message(line_test_app) -> None:
     }
     body, headers = make_signed_body("secret", payload)
 
-    response = client.post("/line/webhook", content=body, headers=headers)
+    first = client.post("/line/webhook", content=body, headers=headers)
+    assert first.status_code == 200
 
-    assert response.status_code == 200
+    second_payload = {
+        "events": [
+            {
+                "type": "message",
+                "replyToken": "reply-7",
+                "message": {"id": "m-7", "type": "text", "text": "again"},
+                "source": {"type": "user", "userId": "user-6"},
+            }
+        ]
+    }
+    body2, headers2 = make_signed_body("secret", second_payload)
+
+    second = client.post("/line/webhook", content=body2, headers=headers2)
+
+    assert second.status_code == 200
+    assert stub_prince.calls == ["please"]
     assert stub_client.replies == [
+        ("reply-6", "prince:please"),
         (
-            "reply-6",
+            "reply-7",
             "今月の無料枠が終了しました。追加の利用をご希望の場合は、決済ページからプランをご検討ください（準備中）。",
-        )
+        ),
+    ]
+    assert db.increment_calls == [
+        {
+            "account_id": 100,
+            "user_id": "user-6",
+            "request_id": "line.monthly:user-6:m-6",
+            "monthly_limit": 1,
+            "remaining": 0,
+        },
+        {
+            "account_id": 100,
+            "user_id": "user-6",
+            "request_id": "line.monthly:user-6:m-7",
+            "monthly_limit": 1,
+            "remaining": 0,
+        },
     ]

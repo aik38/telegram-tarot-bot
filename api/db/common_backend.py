@@ -165,6 +165,80 @@ class CommonBackendDB:
             connection.commit()
             return True, credits_remaining
 
+    def increment_line_message_usage(
+        self,
+        account_id: int,
+        user_id: str,
+        request_id: str,
+        monthly_limit: int,
+    ) -> tuple[bool, int]:
+        """Increment the LINE monthly message count with idempotency.
+
+        Returns:
+            allowed: Whether the increment is within the monthly limit.
+            remaining: Remaining messages for the current month (0 if exceeded).
+        """
+
+        year_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        monthly_limit = max(0, monthly_limit)
+
+        with self._connect() as connection:
+            connection.execute("BEGIN;")
+            existing = connection.execute(
+                """
+                SELECT metadata FROM usage_events WHERE request_id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+            if existing:
+                metadata = (
+                    json.loads(existing["metadata"]) if existing["metadata"] else {}
+                )
+                allowed = bool(metadata.get("allowed", False))
+                remaining = int(metadata.get("remaining", 0))
+                connection.commit()
+                return allowed, remaining
+
+            count_row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM usage_events
+                WHERE account_id = ?
+                  AND event_type = 'line.message'
+                  AND strftime('%Y-%m', occurred_at) = ?
+                """,
+                (account_id, year_month),
+            ).fetchone()
+            current_count = int(count_row["count"] if count_row else 0)
+            new_count = current_count + 1
+            allowed = new_count <= monthly_limit
+            remaining = max(0, monthly_limit - new_count)
+
+            metadata = {
+                "allowed": allowed,
+                "remaining": remaining,
+                "feature": "line.monthly_messages",
+                "year_month": year_month,
+                "user_id": user_id,
+                "new_count": new_count,
+            }
+            connection.execute(
+                """
+                INSERT INTO usage_events (account_id, event_type, feature, metadata, request_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    account_id,
+                    "line.message",
+                    "line.monthly_messages",
+                    json.dumps(metadata),
+                    request_id,
+                ),
+            )
+            connection.commit()
+
+            return allowed, remaining
+
     def _ensure_entitlement(
         self, connection: sqlite3.Connection, account_id: int
     ) -> Entitlement:

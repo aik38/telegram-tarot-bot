@@ -43,6 +43,7 @@ class LineEvent(BaseModel):
 
     type: str
     reply_token: str | None = Field(default=None, alias="replyToken")
+    webhook_event_id: str | None = Field(default=None, alias="webhookEventId")
     message: LineMessage | None = None
     postback: LinePostback | None = None
     source: LineSource
@@ -117,6 +118,14 @@ def _should_verify_signature() -> bool:
     return raw not in {"0", "false", "off", "no"}
 
 
+def _get_line_free_messages_per_month() -> int:
+    raw = os.getenv("LINE_FREE_MESSAGES_PER_MONTH", "30").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 30
+
+
 def _extract_event_text(event: LineEvent) -> str | None:
     if event.message and event.message.type == "text":
         return event.message.text or ""
@@ -129,6 +138,16 @@ def _is_command(text: str, command: str) -> bool:
     return text.strip() == command
 
 
+def _build_request_id(event: LineEvent, user_id: str) -> str:
+    suffix = (
+        event.webhook_event_id
+        or (event.message.id if event.message else None)
+        or event.reply_token
+        or "unknown"
+    )
+    return f"line.monthly:{user_id}:{suffix}"
+
+
 async def _handle_message_event(
     event: LineEvent,
     db: CommonBackendDB,
@@ -139,15 +158,30 @@ async def _handle_message_event(
     if not event.reply_token or not event.source.user_id:
         return
 
-    text = _extract_event_text(event)
-    if text is None:
-        return
-
     user_id = event.source.user_id
     account_id, _ = db.resolve_identity("line", user_id)
 
     is_admin = user_id in admin_user_ids
-    request_id = f"line:{user_id}:{event.message.id if event.message else 'n/a'}"
+    request_id = _build_request_id(event, user_id)
+    monthly_limit = _get_line_free_messages_per_month()
+
+    if not is_admin:
+        allowed, _ = db.increment_line_message_usage(
+            account_id=account_id,
+            user_id=user_id,
+            request_id=request_id,
+            monthly_limit=monthly_limit,
+        )
+        if not allowed:
+            await line_client.reply_text(
+                event.reply_token,
+                "今月の無料枠が終了しました。追加の利用をご希望の場合は、決済ページからプランをご検討ください（準備中）。",
+            )
+            return
+
+    text = _extract_event_text(event)
+    if text is None:
+        return
 
     if _is_command(text, "/whoami"):
         await line_client.reply_text(event.reply_token, f"LINE userId: {user_id}")
@@ -159,24 +193,6 @@ async def _handle_message_event(
         else:
             reply_text = "近日公開。今は「話す」だけ先行公開中です。"
         await line_client.reply_text(event.reply_token, reply_text)
-        return
-
-    allowed: bool
-    if is_admin:
-        allowed = True
-    else:
-        allowed, _ = db.consume_entitlement(
-            account_id=account_id,
-            feature="line.text",
-            units=1,
-            request_id=request_id,
-        )
-
-    if not allowed:
-        await line_client.reply_text(
-            event.reply_token,
-            "今月の無料枠が終了しました。追加の利用をご希望の場合は、決済ページからプランをご検討ください（準備中）。",
-        )
         return
 
     try:

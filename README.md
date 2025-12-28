@@ -30,6 +30,7 @@ pip install -r requirements.txt
   - `LINE_CHANNEL_SECRET`: チャネルシークレット。署名検証に使用します。
   - `LINE_CHANNEL_ACCESS_TOKEN`: チャネルアクセストークン。LINE返信APIを呼ぶ際に使用します。
   - `LINE_ADMIN_USER_IDS`: 管理者だけが「今日の星」「ミニ占い」を実行できます。カンマ区切りで指定。
+  - `LINE_FREE_MESSAGES_PER_MONTH`: 一般ユーザーの月間無料メッセージ上限。未設定時は 30 回/月。
   - `LINE_VERIFY_SIGNATURE`: 署名検証の ON/OFF（デフォルトは `true`。開発でのみ OFF を想定）。
   - `PRINCE_SYSTEM_PROMPT`: 「星の王子さま」人格のシステムプロンプト上書き用。未設定時はデフォルトの短め日本語プロンプトを利用。
   - `LINE_OPENAI_MODEL`: LINE返信用の OpenAI モデル指定（デフォルト `gpt-4o-mini`）。
@@ -64,7 +65,7 @@ pip install -r requirements.txt
   2. API を起動: `uvicorn api.main:app --reload --port 8000`
   3. 別ターミナルで `ngrok http 8000` を実行し、発行された HTTPS URL を LINE Developers の Webhook URL に設定（例: `https://<ngrok-id>.ngrok.io/line/webhook`）。検証ボタンで 200 OK が返ることを確認。
   4. Messaging API > チャネル基本設定で Webhook を有効化し、チャネルアクセストークンを発行。
-  5. 友だち追加後にメッセージを送ると、会話モードで「星の王子さま」人格が応答し、無料枠が尽きた場合は上限メッセージを返します。
+  5. 友だち追加後にメッセージを送ると、会話モードで「星の王子さま」人格が応答し、月間無料枠（デフォルト 30 回）を超えると上限メッセージを返します。
 
 ### LINE開発の最短手順
 
