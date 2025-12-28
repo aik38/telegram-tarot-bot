@@ -198,6 +198,61 @@ python -m pytest -q
   - 応答が `200` であれば、ngrok 経由でも同様に動作する想定です。
 # akolasia_tarot_bot 起動メモ
 
+## LINE公式アカウント起動手順（ローカル / Windows PowerShell）
+
+- 前提: リポジトリ直下で実行、PowerShell 7 推奨、`.venv` を利用。
+- 起動は 2 本立て: 1) API（uvicorn、ポート 8000） 2) ngrok（外部 URL → `localhost:8000` へ転送）。
+- すべてコピペで動くように、最短ワンライナーも併記しています。
+
+### 最短ワンライナー
+
+```powershell
+$repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\.venv\Scripts\Activate.ps1; .\tools\run_line_api.ps1
+```
+
+別ウィンドウで ngrok:
+
+```powershell
+$repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\tools\run_ngrok.ps1
+```
+
+### 手順（詳細）
+
+1. API（uvicorn）起動（別ウィンドウ推奨）
+   ```powershell
+   $repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\.venv\Scripts\Activate.ps1; .\tools\run_line_api.ps1
+   ```
+2. ngrok 起動（別ウィンドウ）
+   ```powershell
+   $repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\tools\run_ngrok.ps1
+   ```
+3. `/docs` が 200 になることを確認
+   ```powershell
+   $repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\.venv\Scripts\Activate.ps1; (Invoke-WebRequest http://127.0.0.1:8000/docs -UseBasicParsing -TimeoutSec 5).StatusCode
+   ```
+4. tools の疎通テスト（任意）
+   ```powershell
+   $repo = Join-Path $env:USERPROFILE "OneDrive\デスクトップ\telegram-tarot-bot"; cd $repo; .\.venv\Scripts\Activate.ps1; python .\tools\test_line_webhook.py
+   ```
+
+### 動作確認ポイント
+
+- `Invoke-WebRequest` の結果が `200`。
+- ngrok の Web UI: http://127.0.0.1:4040 でトンネルが見える。
+
+### LINE Developers 側設定（概念）
+
+- Webhook URL: `https://<ngrokドメイン>/webhooks/line`
+- Webhook を ON にする。
+- 「検証」や再送で、ngrok の inspect 画面に POST が到達することを確認。
+
+### よくある詰まりポイント
+
+- `No module named api` → リポジトリ直下で実行していない、または venv を有効化していない。
+- `run_ngrok.ps1 が認識されない` → リポジトリ直下で実行していない。
+- `ERR_NGROK_334` → 同じエンドポイントの ngrok が既に起動中。既存 ngrok を停止してから再実行。
+- 接続拒否 → uvicorn が起動していない、またはポート指定が間違っている。
+
 ## セットアップ
 cd "%USERPROFILE%\OneDrive\デスクトップ\telegram-tarot-bot"
 .\.venv\Scripts\Activate
