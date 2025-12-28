@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import os
+import logging
 from typing import Iterable
 
 import httpx
@@ -13,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from api.db.common_backend import CommonBackendDB
 from api.routers import common_backend
 from api.services.line_prince import PrinceChatService, get_prince_chat_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -60,10 +63,8 @@ class LineReplyClient:
     async def reply_text(self, reply_token: str, text: str) -> None:
         access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
         if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="LINE_CHANNEL_ACCESS_TOKEN is not configured",
-            )
+            logger.error("LINE reply failed: LINE_CHANNEL_ACCESS_TOKEN is not configured")
+            return
 
         payload = {
             "replyToken": reply_token,
@@ -86,9 +87,10 @@ class LineReplyClient:
             )
 
         if response.status_code >= 400:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="LINE reply failed",
+            logger.warning(
+                "LINE reply failed: status=%s body=%s",
+                response.status_code,
+                (response.text or "").strip(),
             )
 
 
@@ -198,6 +200,7 @@ async def _handle_message_event(
     try:
         reply_text = await prince_chat_service.generate_reply(text)
     except Exception:
+        logger.exception("LINE prince chat generation failed for user_id=%s", user_id)
         reply_text = "少し混み合っています。すこし時間を置いてからもう一度お話ししましょう。"
 
     await line_client.reply_text(event.reply_token, reply_text)
@@ -211,9 +214,7 @@ async def _run_admin_feature(trigger: str) -> str:
     return "近日公開。今は「話す」だけ先行公開中です。"
 
 
-@router.post("/line/webhook")
-@router.post("/webhooks/line")
-async def handle_line_webhook(
+async def _process_line_webhook(
     request: Request,
     x_line_signature: str | None = Header(default=None, alias="X-Line-Signature"),
     db: CommonBackendDB = Depends(common_backend.get_db),
@@ -259,3 +260,27 @@ async def handle_line_webhook(
         await _handle_message_event(event, db, line_client, admin_user_ids, prince_chat_service)
 
     return {"status": "ok"}
+
+
+@router.post("/line/webhook")
+@router.post("/webhooks/line")
+async def handle_line_webhook(
+    request: Request,
+    x_line_signature: str | None = Header(default=None, alias="X-Line-Signature"),
+    db: CommonBackendDB = Depends(common_backend.get_db),
+    line_client: LineReplyClient = Depends(get_line_client),
+    prince_chat_service: PrinceChatService = Depends(get_prince_chat_service),
+) -> dict[str, str]:
+    try:
+        return await _process_line_webhook(
+            request,
+            x_line_signature,
+            db,
+            line_client,
+            prince_chat_service,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("LINE webhook handler failed")
+        return {"status": "ok"}

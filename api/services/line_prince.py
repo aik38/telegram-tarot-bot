@@ -29,7 +29,8 @@ def _get_system_prompt() -> str:
 
 class PrinceChatService:
     def __init__(self, client: OpenAI | None = None) -> None:
-        self.client = client or OpenAI()
+        api_key = os.getenv("OPENAI_API_KEY")
+        self.client = client or (OpenAI(api_key=api_key) if api_key else None)
         self.system_prompt = _get_system_prompt()
 
     async def generate_reply(self, user_message: str) -> str:
@@ -42,6 +43,9 @@ class PrinceChatService:
     async def _call_openai(self, messages: Iterable[dict[str, str]]) -> str:
         max_attempts = 3
         base_delay = 1.2
+
+        if not self.client:
+            raise RuntimeError("OpenAI client is not configured (missing OPENAI_API_KEY)")
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -73,4 +77,3 @@ class PrinceChatService:
 
 def get_prince_chat_service() -> PrinceChatService:  # pragma: no cover - dependency hook
     return PrinceChatService()
-

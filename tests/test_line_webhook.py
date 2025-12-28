@@ -301,3 +301,31 @@ def test_denied_monthly_quota_returns_limit_message(monkeypatch: pytest.MonkeyPa
             "remaining": 0,
         },
     ]
+
+
+def test_prince_error_returns_fallback(line_test_app) -> None:
+    class RaisingPrince(PrinceChatService):
+        async def generate_reply(self, user_message: str) -> str:
+            raise RuntimeError("boom")
+
+    client, db, stub_client, _ = line_test_app
+    app.dependency_overrides[line_webhook.get_prince_chat_service] = lambda: RaisingPrince()
+
+    payload = {
+        "events": [
+            {
+                "type": "message",
+                "replyToken": "reply-err",
+                "message": {"id": "m-err", "type": "text", "text": "hi"},
+                "source": {"type": "user", "userId": "user-err"},
+            }
+        ]
+    }
+    body, headers = make_signed_body("secret", payload)
+
+    response = client.post("/line/webhook", content=body, headers=headers)
+
+    assert response.status_code == 200
+    assert stub_client.replies == [
+        ("reply-err", "少し混み合っています。すこし時間を置いてからもう一度お話ししましょう。")
+    ]

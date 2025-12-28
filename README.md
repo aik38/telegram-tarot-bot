@@ -186,6 +186,16 @@ python -m pytest -q
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
+
+### LINE Webhook ローカル検証ショートカット
+
+- `.env` の読み込み忘れ対策として、API 側も `python-dotenv` で自動ロードします（既存の環境変数は上書きしません）。
+- 開発時に system python と venv が混ざらないよう、PowerShell 用ショートカットを用意しています。
+  - `tools/run_line_api.ps1`: リポジトリ直下に移動して venv を有効化し、`uvicorn api.main:app --host 0.0.0.0 --port 8000` を起動。
+  - `tools/run_ngrok.ps1`: `ngrok http 8000` を実行。二重起動エラーを避けるため、既存 ngrok プロセスがないことを確認してから実行してください。
+- ローカルで LINE Webhook を叩くテスト: `python tools/test_line_webhook.py`
+  - `.env` から `LINE_CHANNEL_SECRET` を読み、署名付きで `http://localhost:8000/webhooks/line` に POST します（環境変数 `LINE_WEBHOOK_URL` でURL上書き可）。
+  - 応答が `200` であれば、ngrok 経由でも同様に動作する想定です。
 # akolasia_tarot_bot 起動メモ
 
 ## セットアップ

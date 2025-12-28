@@ -1,10 +1,28 @@
+import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from api.db import apply_migrations
 
 from api.routers import common_backend, line_webhook, stripe, tg_prince
 
+logger = logging.getLogger(__name__)
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
 app = FastAPI()
+
+
+def _log_env_status() -> None:
+    logger.info(
+        "Environment flags -> OPENAI_API_KEY set: %s, LINE_CHANNEL_ACCESS_TOKEN set: %s, LINE_CHANNEL_SECRET set: %s",
+        bool(os.getenv("OPENAI_API_KEY")),
+        bool(os.getenv("LINE_CHANNEL_ACCESS_TOKEN")),
+        bool(os.getenv("LINE_CHANNEL_SECRET")),
+    )
 
 
 @app.get("/api/health")
@@ -14,6 +32,7 @@ async def health_check() -> dict[str, str]:
 
 @app.on_event("startup")
 def run_migrations() -> None:
+    _log_env_status()
     apply_migrations()
 
 
