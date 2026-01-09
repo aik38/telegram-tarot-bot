@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 from typing import Set
 
 from dotenv import load_dotenv
 
-load_dotenv()
+dotenv_path = Path(os.getenv("DOTENV_FILE", Path(__file__).resolve().parents[1] / ".env"))
+load_dotenv(dotenv_path, override=False)
 
 
 def _parse_admin_ids(raw: str) -> Set[int]:

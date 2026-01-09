@@ -14,7 +14,10 @@ from typing import Any, Awaitable, Callable, Iterable, Sequence
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+dotenv_path = Path(
+    os.getenv("DOTENV_FILE", Path(__file__).resolve().parents[1] / ".env")
+)
+load_dotenv(dotenv_path, override=False)
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest

@@ -21,6 +21,31 @@ pip install -r requirements.txt
 - 日常運用は PowerShell で `tools/sync.ps1`（ショートカット名: “telegram sync”）を実行する想定です。内部で `git pull --rebase` → `.venv\Scripts\python.exe -m pytest -q` → 変更があれば commit/push の順で回します。
   - Windows 由来の junk（Desktop.ini など）だけが差分の場合は commit をスキップします（PR #47 実装）。
 
+## Windows最短起動（Bot）
+
+PowerShell で **1コマンド** で Bot（aiogram）を起動する手順です。API サーバー（Uvicorn）は別コマンドなので、Bot を動かしたい場合は以下のスクリプトを使ってください。
+
+### Arisa を動かす
+
+1. リポジトリ直下に `.env.arisa` を作成し、`TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `SQLITE_DB_PATH`, `CHARACTER=arisa`, `PAYWALL_ENABLED` など必要な環境変数を設定します。
+2. PowerShell で以下を実行します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_arisa.ps1
+```
+
+### 通常（.env）で起動する
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_default.ps1
+```
+
+### 補足
+
+- 上記スクリプトは `.venv` の作成 → 依存導入 → dotenv 読み込み → Bot 起動までを実行します。
+- `DOTENV_FILE` が指定されている場合はそのファイルを読み込み、未指定の場合は `.env` を読み込みます。
+- `.env` / `.env.*` は **コミット禁止** です（`.env.example` のみ追跡対象）。
+
 ### 主な環境変数
 
 - `.env.example` を `.env` にコピーして値を埋めてください。

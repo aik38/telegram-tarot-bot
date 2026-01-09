@@ -11,7 +11,10 @@ from api.routers import common_backend, line_webhook, stripe, tg_prince
 
 logger = logging.getLogger(__name__)
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+dotenv_path = Path(
+    os.getenv("DOTENV_FILE", Path(__file__).resolve().parents[1] / ".env")
+)
+load_dotenv(dotenv_path, override=False)
 
 app = FastAPI()
 
