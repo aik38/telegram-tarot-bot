@@ -8,8 +8,6 @@ JP: 禁止: 暴力/傷害
 EN: Prohibited: violence/assault
 JP: 禁止: 無力化(睡眠/泥酔/薬物等)
 EN: Prohibited: incapacitation (sleep/drunk/drugs)
-JP: 禁止: 近親
-EN: Prohibited: incest
 JP: 禁止: 獣
 EN: Prohibited: bestiality
 JP: ここまでArisaのキャラクターモジュール境界
