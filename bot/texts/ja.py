@@ -61,6 +61,21 @@ START_TEXT = (
     "使い方は /help で確認できます。\n"
 )
 
+ARISA_START_TEXT = (
+    "こんにちは、アリサです。\n"
+    "恋愛やセクシーな悩み、雑談まで気軽に話してね。\n"
+    "NG: 未成年・露骨な性描写・違法行為。\n"
+    "今の気持ちを教えて。"
+)
+
+ARISA_MENU_LOVE_LABEL = "💖恋愛"
+ARISA_MENU_SEXY_LABEL = "🔥セクシー"
+ARISA_LOVE_PROMPT = "恋愛の話ね。気になる相手や今の状況を教えて。"
+ARISA_SEXY_PROMPT = "セクシーな相談だね。無理のない範囲で話して。"
+ARISA_CHARGE_BLOCKED_TEXT = "このモードではチャージは使えません。会話だけで対応します。"
+ARISA_STATUS_BLOCKED_TEXT = "このモードではステータスは表示できません。"
+ARISA_BLOCK_NOTICE = "このBotでは占い/課金は無効です。会話だけ対応しています。"
+
 STORE_INTRO_TEXT = (
     "購入後は、そのまま「🎩占い」や「💬相談」に戻れます。\n"
     "Stars はアカウント内に残り、余った分は次回も使えます。\n"

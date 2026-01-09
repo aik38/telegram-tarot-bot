@@ -34,7 +34,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
-from bot.keyboards.common import base_menu_kb
+from bot.keyboards.common import arisa_menu_kb, base_menu_kb
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.utils.postprocess import postprocess_llm_text
 from bot.utils.replies import ensure_quick_menu
@@ -225,7 +225,6 @@ ARISA_BLOCKED_COMMANDS = {
     "love1",
     "buy",
     "status",
-    "lang",
     "help",
     "terms",
     "support",
@@ -1436,6 +1435,24 @@ def _normalize_language_button_text(text: str) -> str:
     return normalized
 
 
+def _normalize_menu_text(text: str) -> str:
+    if not text:
+        return ""
+    normalized = _normalize_language_button_base(text)
+    return normalized.strip()
+
+
+def _get_arisa_menu_labels(lang: str | None) -> dict[str, str]:
+    lang_code = normalize_lang(lang)
+    return {
+        "love": t(lang_code, "ARISA_MENU_LOVE_LABEL"),
+        "sexy": t(lang_code, "ARISA_MENU_SEXY_LABEL"),
+        "charge": t(lang_code, "MENU_STORE_LABEL"),
+        "status": t(lang_code, "MENU_STATUS_LABEL"),
+        "language": t(lang_code, "MENU_LANGUAGE_LABEL"),
+    }
+
+
 def _has_language_button_prefix(text: str) -> bool:
     if not text:
         return False
@@ -1539,6 +1556,10 @@ def get_user_lang_or_default(user_id: int | None) -> str:
 
 def build_base_menu(user_id: int | None):
     return base_menu_kb(lang=get_user_lang_or_default(user_id))
+
+
+def build_arisa_menu(user_id: int | None):
+    return arisa_menu_kb(lang=get_user_lang_or_default(user_id))
 
 
 def build_quick_menu(
@@ -2045,6 +2066,11 @@ async def execute_tarot_request(
 def get_start_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
     return t(lang_code, "START_TEXT")
+
+
+def get_arisa_start_text(lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    return t(lang_code, "ARISA_START_TEXT")
 
 
 def get_store_intro_text(lang: str | None = "ja") -> str:
@@ -3790,8 +3816,9 @@ def _is_arisa_tarot_trigger(text: str) -> bool:
     return any(keyword in lowered for keyword in ARISA_TAROT_KEYWORDS)
 
 
-def _arisa_block_notice() -> str:
-    return "このBotでは占い/課金は無効です。会話だけ対応しています。"
+def _arisa_block_notice(lang: str | None = "ja") -> str:
+    lang_code = normalize_lang(lang)
+    return t(lang_code, "ARISA_BLOCK_NOTICE")
 
 
 async def handle_arisa_chat(message: Message, user_query: str) -> None:
@@ -3825,15 +3852,15 @@ async def handle_arisa_chat(message: Message, user_query: str) -> None:
         if fatal:
             await message.answer(
                 "ごめんね、今うまく返せないみたい。少し待ってもう一度送って。",
-                reply_markup=ReplyKeyboardRemove(),
+                reply_markup=build_arisa_menu(user_id),
             )
             return
-        await message.answer(answer, reply_markup=ReplyKeyboardRemove())
+        await message.answer(answer, reply_markup=build_arisa_menu(user_id))
     except Exception:
         logger.exception("Unexpected error during Arisa chat")
         await message.answer(
             "すみません、今ちょっと調子が悪いみたいです…\n少し時間をおいてから、もう一度話しかけてください。",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=build_arisa_menu(user_id),
         )
     finally:
         total_ms = (perf_counter() - total_start) * 1000
@@ -3852,30 +3879,104 @@ async def handle_arisa_chat(message: Message, user_query: str) -> None:
 
 @arisa_router.message(CommandStart())
 async def arisa_start(message: Message) -> None:
-    text = (
-        "こんにちは、アリサ。\n"
-        "ここは会話だけのBotだよ。恋愛/孤独/雑談/相談、なんでも話して。\n"
-        "NG: 未成年・露骨な性描写・違法行為。\n"
-        "今の気持ち、教えて。"
+    user_id = message.from_user.id if message.from_user else None
+    mark_user_active(user_id)
+    lang, is_persisted = resolve_user_lang(message)
+    start_text = get_arisa_start_text(lang=lang)
+    if not is_persisted:
+        prompt = f"{t(lang, 'LANGUAGE_SELECT_PROMPT')}\n\n{start_text}"
+        await message.answer(prompt, reply_markup=build_lang_keyboard(lang=lang))
+        return
+    await message.answer(start_text, reply_markup=build_arisa_menu(user_id))
+
+
+@arisa_router.message(Command("lang"))
+async def arisa_cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
+    if not skip_dedup and not _should_process_message(message, handler="lang"):
+        return
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        await message.answer(t("ja", "USER_INFO_MISSING"))
+        return
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(
+        t(lang, "LANGUAGE_SELECT_PROMPT"),
+        reply_markup=build_lang_keyboard(lang=lang),
     )
-    await message.answer(text, reply_markup=ReplyKeyboardRemove())
+
+
+@arisa_router.callback_query(F.data.startswith("lang:set:"))
+async def arisa_handle_lang_set(query: CallbackQuery) -> None:
+    await _safe_answer_callback(query, cache_time=1)
+    data = query.data or ""
+    lang_code = data.split(":", maxsplit=2)[-1] if ":" in data else None
+    normalized = normalize_lang(lang_code) if lang_code else None
+    user_id = query.from_user.id if query.from_user else None
+
+    if normalized not in SUPPORTED_LANGS or user_id is None:
+        if query.message:
+            await query.message.answer(t("ja", "LANGUAGE_SET_FAILED"))
+        return
+
+    set_user_lang(user_id, normalized)
+    mark_user_active(user_id)
+    lang_label_map = {
+        "ja": t("ja", "LANGUAGE_OPTION_JA"),
+        "en": t("en", "LANGUAGE_OPTION_EN"),
+        "pt": t("pt", "LANGUAGE_OPTION_PT"),
+    }
+    lang_label = lang_label_map.get(normalized, normalized)
+    confirmation = t(normalized, "LANGUAGE_SET_CONFIRMATION", language=lang_label)
+    reply_markup = arisa_menu_kb(lang=normalized)
+    start_text = get_arisa_start_text(lang=normalized)
+    if query.message:
+        await query.message.answer(confirmation, reply_markup=reply_markup)
+        await query.message.answer(start_text, reply_markup=reply_markup)
+    else:
+        await bot.send_message(user_id, confirmation, reply_markup=reply_markup)
+        await bot.send_message(user_id, start_text, reply_markup=reply_markup)
 
 
 @arisa_router.message(Command(commands=sorted(ARISA_BLOCKED_COMMANDS)))
 async def arisa_blocked_command(message: Message) -> None:
-    await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(_arisa_block_notice(lang), reply_markup=build_arisa_menu(user_id))
 
 
 @arisa_router.message(F.text.startswith("/"))
 async def arisa_other_command(message: Message) -> None:
-    await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(_arisa_block_notice(lang), reply_markup=build_arisa_menu(user_id))
 
 
 @arisa_router.message(F.text)
 async def arisa_text(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
     text = message.text or ""
+    menu_labels = _get_arisa_menu_labels(lang)
+    normalized = _normalize_menu_text(text)
+
+    if normalized == _normalize_menu_text(menu_labels["love"]):
+        await message.answer(t(lang, "ARISA_LOVE_PROMPT"), reply_markup=build_arisa_menu(user_id))
+        return
+    if normalized == _normalize_menu_text(menu_labels["sexy"]):
+        await message.answer(t(lang, "ARISA_SEXY_PROMPT"), reply_markup=build_arisa_menu(user_id))
+        return
+    if normalized == _normalize_menu_text(menu_labels["charge"]):
+        await message.answer(t(lang, "ARISA_CHARGE_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+        return
+    if normalized == _normalize_menu_text(menu_labels["status"]):
+        await message.answer(t(lang, "ARISA_STATUS_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+        return
+    is_language_button, _ = is_language_reply_button(text)
+    if is_language_button:
+        await arisa_cmd_lang(message, skip_dedup=True)
+        return
     if _is_arisa_tarot_trigger(text):
-        await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+        await message.answer(_arisa_block_notice(lang), reply_markup=build_arisa_menu(user_id))
         return
     await handle_arisa_chat(message, user_query=text)
 
@@ -4056,6 +4157,9 @@ async def main() -> None:
             "mode": "startup",
             "bot_mode": BOT_MODE,
             "bot_username": getattr(me, "username", None),
+            "character": CHARACTER or None,
+            "dotenv_file": str(dotenv_path),
+            "paywall_enabled": PAYWALL_ENABLED,
         },
     )
     await dp.start_polling(bot)

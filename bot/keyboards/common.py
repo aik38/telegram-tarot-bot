@@ -46,3 +46,30 @@ def base_menu_kb(lang: str | None = "ja") -> ReplyKeyboardMarkup:
         is_persistent=True,
         resize_keyboard=True,
     )
+
+
+def arisa_menu_kb(lang: str | None = "ja") -> ReplyKeyboardMarkup:
+    lang_code = normalize_lang(lang)
+    labels = (
+        (
+            t(lang_code, "ARISA_MENU_LOVE_LABEL"),
+            t(lang_code, "ARISA_MENU_SEXY_LABEL"),
+        ),
+        (
+            t(lang_code, "MENU_STORE_LABEL"),
+            t(lang_code, "MENU_STATUS_LABEL"),
+            t(lang_code, "MENU_LANGUAGE_LABEL"),
+        ),
+    )
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=labels[0][0]), KeyboardButton(text=labels[0][1])],
+            [
+                KeyboardButton(text=labels[1][0]),
+                KeyboardButton(text=labels[1][1]),
+                KeyboardButton(text=labels[1][2]),
+            ],
+        ],
+        is_persistent=True,
+        resize_keyboard=True,
+    )

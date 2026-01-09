@@ -24,6 +24,19 @@ TEXTS = {
         "Use os botões abaixo para escolher “🎩 Tarot” ou “💬 Conversa”.\n"
         "Veja /help para as instruções.\n"
     ),
+    "ARISA_START_TEXT": (
+        "Oi, eu sou a Arisa.\n"
+        "Fale sobre amor, temas sensuais ou bate-papo à vontade.\n"
+        "NG: menores, descrições sexuais explícitas ou atividade ilegal.\n"
+        "Conte como você está se sentindo."
+    ),
+    "ARISA_MENU_LOVE_LABEL": "💖 Amor",
+    "ARISA_MENU_SEXY_LABEL": "🔥 Sexy",
+    "ARISA_LOVE_PROMPT": "Vamos falar de amor. Conte sobre a pessoa ou situação que está na sua cabeça.",
+    "ARISA_SEXY_PROMPT": "Tema sexy anotado. Compartilhe só o que for confortável.",
+    "ARISA_CHARGE_BLOCKED_TEXT": "Recargas não estão disponíveis neste modo. Aqui é só conversa.",
+    "ARISA_STATUS_BLOCKED_TEXT": "Status não está disponível neste modo.",
+    "ARISA_BLOCK_NOTICE": "Tarô e pagamentos estão desativados neste bot. Só conversa.",
     "STORE_INTRO_TEXT": (
         "Depois da compra, você pode voltar para “🎩 Tarot” ou “💬 Conversa”.\n"
         "As Stars ficam na sua conta e o saldo continua disponível.\n"
