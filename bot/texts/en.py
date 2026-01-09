@@ -23,20 +23,39 @@ TEXTS = {
         "Check /help for details.\n"
     ),
     "ARISA_START_TEXT": (
-        "Hi, I'm Arisa.\n"
-        "Feel free to talk about love, sexy topics, or casual chat.\n"
-        "NG: minors, explicit sexual descriptions, or illegal activity.\n"
-        "Tell me how you're feeling."
+        "Hi, I'm Arisa. 💕\n"
+        "We can talk about heart-fluttering love or a slightly grown-up chat—only within safe, comfy bounds.\n"
+        "Got a secret feeling you can't share? You can unravel it here. 🥰\n"
+        "※ NG: minors / explicit sexual descriptions / illegal activity\n"
+        "Tell me how you're feeling right now."
     ),
     "ARISA_MENU_LOVE_LABEL": "💖 Love",
     "ARISA_MENU_SEXY_LABEL": "🔥 Sexy",
-    "ARISA_LOVE_PROMPT": "Let's talk about love. Tell me about the person or situation on your mind.",
-    "ARISA_SEXY_PROMPT": "Sexy topic noted. Share only what you're comfortable with.",
+    "ARISA_LOVE_PROMPT": (
+        "Let’s flip the love switch. 💖 Is someone on your mind? Tell me the situation in just one line."
+    ),
+    "ARISA_SEXY_PROMPT": (
+        "A secret just for us… 🔥 Share only what feels safe—what kind of mood are you in?"
+    ),
+    "ARISA_LOVE_PROMPTS": [
+        "Let’s flip the love switch. 💖 Is someone on your mind? Tell me the situation in just one line.",
+        "Are you fluttery or a little wistful? 💗 Let me hear that feeling up close.",
+        "Is today a day to move love forward? 💞 How close are you two—about what percent?",
+    ],
+    "ARISA_SEXY_PROMPTS": [
+        "A secret just for us… 🔥 Share only what feels safe—what kind of mood are you in?",
+        "Shall we set a slightly grown-up vibe? 🥀 Do you want comfort, a thrill, or a sense of ease?",
+        "Do you like the feeling of getting closer through words? ✨ If it’s shy, it’s okay to keep it vague.",
+    ],
     "ARISA_CHARGE_BLOCKED_TEXT": "Top-ups aren't available in this mode. We only chat here.",
     "ARISA_STATUS_BLOCKED_TEXT": "Status is not available in this mode.",
     "ARISA_BLOCK_NOTICE": "Tarot and payments are disabled in this bot. Chat only.",
     "STORE_INTRO_TEXT": (
         "After purchase, you can return to “🎩 Tarot” or “💬 Chat”.\n"
+        "Stars stay on your account and any unused balance carries over.\n"
+    ),
+    "ARISA_STORE_INTRO_TEXT": (
+        "After purchase, you can jump right back into love talk or casual chat.\n"
         "Stars stay on your account and any unused balance carries over.\n"
     ),
     "HELP_TEXT_TEMPLATE": (
@@ -118,6 +137,18 @@ TEXTS = {
     "STATUS_IMAGES_OFF": "disabled",
     "STATUS_RESET": "• Next reset for free limits: {reset_time}",
     "STATUS_LATEST_PURCHASE": "• Latest purchase: {label} / SKU: {sku} (granted: {purchased_at})",
+    "ARISA_PRODUCT_PASS_7D_TITLE": "7-day pass (Love chat)",
+    "ARISA_PRODUCT_PASS_7D_DESCRIPTION": "A 7-day pass for keeping love talk and gentle adult chat going daily.",
+    "ARISA_PRODUCT_PASS_30D_TITLE": "30-day pass (Deep talk)",
+    "ARISA_PRODUCT_PASS_30D_DESCRIPTION": "A 30-day pass for ongoing, unhurried conversations.",
+    "ARISA_PRODUCT_TICKET_3_TITLE": "Light deep-dive ticket",
+    "ARISA_PRODUCT_TICKET_3_DESCRIPTION": "A ticket for a quick, gentle deep-dive when something’s on your mind.",
+    "ARISA_PRODUCT_TICKET_7_TITLE": "Focused deep-dive ticket",
+    "ARISA_PRODUCT_TICKET_7_DESCRIPTION": "A ticket for a more thoughtful, structured conversation.",
+    "ARISA_PRODUCT_TICKET_10_TITLE": "Slow conversation ticket",
+    "ARISA_PRODUCT_TICKET_10_DESCRIPTION": "A special ticket for taking your time and talking it through.",
+    "ARISA_PRODUCT_ADDON_IMAGES_TITLE": "Image add-on",
+    "ARISA_PRODUCT_ADDON_IMAGES_DESCRIPTION": "Enable a visual touch that matches the mood of your conversation.",
     "NON_CONSULT_OUT_OF_QUOTA_MESSAGE": (
         "This bot is for tarot readings and chat. Use /read1 for readings or /love1 for love topics. "
         "Top up via /buy."

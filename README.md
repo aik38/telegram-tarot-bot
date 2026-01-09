@@ -54,10 +54,11 @@ powershell -ExecutionPolicy Bypass -File scripts/run_default.ps1
    3. 「🎩占い」「💬相談」をそれぞれタップし、各モードの案内が返ることを確認。
    4. 「🌐 言語設定」をタップし、3言語の選択肢が表示されることを確認。
 2. Arisa モード（CHARACTER=arisa）
+   - Arisa の「💖恋愛」「🔥セクシー」開始文はランダムに切り替わります。また Store/Status はモードに関係なく常に利用できます。
    1. `.env.arisa` を用意して `scripts/run_arisa.ps1` で起動し、Telegram で `/start` を送信。
    2. 上段ボタンが「💖恋愛」「🔥セクシー」に切り替わっていることを確認。
-   3. 「💖恋愛」「🔥セクシー」をそれぞれタップし、Arisa 専用の促し文が返ることを確認。
-   4. 「🛒チャージ」「📊ステータス」をタップし、Arisa モードでは利用できない旨の案内が返ることを確認。
+   3. 「💖恋愛」「🔥セクシー」をそれぞれタップし、Arisa 専用の促し文がランダムに返ることを確認。
+   4. 「🛒チャージ」「📊ステータス」をタップし、どのモードでも Store/Status が開くことを確認。
    5. 「🌐 言語設定」をタップし、3言語の選択肢が表示されることを確認。
 
 ### Arisa コマンド制御の更新（概要）
@@ -70,7 +71,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_default.ps1
 1. `.env.arisa` を用意して `scripts/run_arisa.ps1` を実行。
 2. Telegram で `/start` を送信し、Arisa メニューが出ることを確認。
 3. `/help` `/lang` `/language` がそれぞれ案内/言語選択を返すことを確認。
-4. `/status` `/store` で Arisa のブロック案内が返ることを確認。
+4. `/status` `/store` で Store/Status が表示されることを確認。
 5. `/read1` `/buy` など未許可コマンドがブロック文言で返ることを確認。
 6. `scripts/run_default.ps1` で起動し、default の `/start` `/read1` が従来通り動作することを確認。
 

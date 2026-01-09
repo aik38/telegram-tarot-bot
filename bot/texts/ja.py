@@ -62,22 +62,37 @@ START_TEXT = (
 )
 
 ARISA_START_TEXT = (
-    "こんにちは、アリサです。\n"
-    "恋愛やセクシーな悩み、雑談まで気軽に話してね。\n"
-    "NG: 未成年・露骨な性描写・違法行為。\n"
-    "今の気持ちを教えて。"
+    "こんにちは、アリサです💕\n"
+    "恋のドキドキも、ちょっと大人な雑談も、安心できる範囲でお話ししよ？\n"
+    "誰にも言えない内緒の気持ち…ここでほどいていいよ🥰\n"
+    "※NG：未成年／露骨な性描写／違法行為\n"
+    "いまの気分、教えて？"
 )
 
 ARISA_MENU_LOVE_LABEL = "💖恋愛"
 ARISA_MENU_SEXY_LABEL = "🔥セクシー"
-ARISA_LOVE_PROMPT = "恋愛の話ね。気になる相手や今の状況を教えて。"
-ARISA_SEXY_PROMPT = "セクシーな相談だね。無理のない範囲で話して。"
+ARISA_LOVE_PROMPT = "恋のスイッチ入れよ？💖 いま気になってる人はいる？“一言だけ”で状況教えて。"
+ARISA_SEXY_PROMPT = "秘密の話、ここだけでね…🔥 無理のない範囲で、“どんな気分”か教えて？"
+ARISA_LOVE_PROMPTS = (
+    "恋のスイッチ入れよ？💖 いま気になってる人はいる？“一言だけ”で状況教えて。",
+    "ドキドキしてる？それとも切ない？💗 その気持ち、いちばん近くで聞かせて。",
+    "今日は恋を進めたい日？💞 相手との距離、いま“何％”くらいだと思う？",
+)
+ARISA_SEXY_PROMPTS = (
+    "秘密の話、ここだけでね…🔥 無理のない範囲で、“どんな気分”か教えて？",
+    "少し大人の空気にしよ？🥀 いま欲しいのは、癒し？ドキドキ？それとも安心感？",
+    "言葉でそっと近づく感じ…好き？✨ 恥ずかしさがあるなら、ぼかして話しても大丈夫だよ。",
+)
 ARISA_CHARGE_BLOCKED_TEXT = "このモードではチャージは使えません。会話だけで対応します。"
 ARISA_STATUS_BLOCKED_TEXT = "このモードではステータスは表示できません。"
 ARISA_BLOCK_NOTICE = "このBotでは占い/課金は無効です。会話だけ対応しています。"
 
 STORE_INTRO_TEXT = (
     "購入後は、そのまま「🎩占い」や「💬相談」に戻れます。\n"
+    "Stars はアカウント内に残り、余った分は次回も使えます。\n"
+)
+ARISA_STORE_INTRO_TEXT = (
+    "購入後は、そのまま恋愛/雑談の会話に戻れます。\n"
     "Stars はアカウント内に残り、余った分は次回も使えます。\n"
 )
 
@@ -141,6 +156,18 @@ PRODUCT_TICKET_10_TITLE = "ケルト十字(10枚)"
 PRODUCT_TICKET_10_DESCRIPTION = "じっくり見たい方の10枚スプレッド1回分です。複数の視点で整理したいときに。"
 PRODUCT_ADDON_IMAGES_TITLE = "画像追加オプション"
 PRODUCT_ADDON_IMAGES_DESCRIPTION = "占い結果に画像を添付するオプションを有効化します。"
+ARISA_PRODUCT_PASS_7D_TITLE = "7日パス（恋愛トーク）"
+ARISA_PRODUCT_PASS_7D_DESCRIPTION = "恋愛や大人雑談を毎日気軽に続けたい方向けの7日間パスです。"
+ARISA_PRODUCT_PASS_30D_TITLE = "30日パス（じっくり相談）"
+ARISA_PRODUCT_PASS_30D_DESCRIPTION = "落ち着いて相談や雑談を続けたい方向けの30日間パスです。"
+ARISA_PRODUCT_TICKET_3_TITLE = "ライト深掘りチケット"
+ARISA_PRODUCT_TICKET_3_DESCRIPTION = "気になるテーマを軽く深掘りしたいときの相談チケットです。"
+ARISA_PRODUCT_TICKET_7_TITLE = "しっかり深掘りチケット"
+ARISA_PRODUCT_TICKET_7_DESCRIPTION = "状況をもう少し丁寧に整理したいときに使えるチケットです。"
+ARISA_PRODUCT_TICKET_10_TITLE = "じっくり対話チケット"
+ARISA_PRODUCT_TICKET_10_DESCRIPTION = "ゆっくり話したいときの特別チケットです。"
+ARISA_PRODUCT_ADDON_IMAGES_TITLE = "画像追加オプション"
+ARISA_PRODUCT_ADDON_IMAGES_DESCRIPTION = "会話の雰囲気に合う画像を添えるオプションを有効化します。"
 PASS_EXTENDED_TEXT = "有効期限を更新しました。"
 UNLOCK_TICKET_ADDED = "{product}を追加しました。現在の残り枚数は {balance} 枚です。"
 UNLOCK_PASS_GRANTED = "{duration}を付与しました。\n有効期限: {until_text}{remaining_hint}"

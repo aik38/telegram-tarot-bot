@@ -463,6 +463,13 @@ LANGUAGE_BUTTON_LABELS = {
 }
 GLOBE_EMOJI_PREFIXES = ("🌐", "🌍", "🌎", "🌏")
 _VARIATION_SELECTOR_RE = re.compile(r"[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+ARISA_MENU_ACTION_ALIASES = {
+    "love": ("love", "恋愛", "amor"),
+    "sexy": ("sexy", "セクシー"),
+    "store": ("store", "charge", "チャージ", "ストア", "loja"),
+    "status": ("status", "ステータス", "estado"),
+    "language": ("language", "lang", "言語設定", "言語", "idioma"),
+}
 
 
 def _get_theme_labels(lang: str) -> dict[str, str]:
@@ -1448,6 +1455,41 @@ def _normalize_menu_text(text: str) -> str:
     return normalized.strip()
 
 
+def _normalize_arisa_action_text(text: str) -> str:
+    if not text:
+        return ""
+    normalized = _normalize_language_button_base(text)
+    normalized = _VARIATION_SELECTOR_RE.sub("", normalized)
+    normalized = "".join(
+        ch for ch in normalized if unicodedata.category(ch) != "So"
+    )
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized.strip().casefold()
+
+
+def _resolve_arisa_menu_action(text: str, lang: str | None) -> str | None:
+    token = _normalize_arisa_action_text(text)
+    if not token:
+        return None
+    menu_labels = _get_arisa_menu_labels(lang)
+    candidates_map = {
+        "love": (menu_labels["love"], *ARISA_MENU_ACTION_ALIASES["love"]),
+        "sexy": (menu_labels["sexy"], *ARISA_MENU_ACTION_ALIASES["sexy"]),
+        "store": (menu_labels["charge"], *ARISA_MENU_ACTION_ALIASES["store"]),
+        "status": (menu_labels["status"], *ARISA_MENU_ACTION_ALIASES["status"]),
+        "language": (menu_labels["language"], *ARISA_MENU_ACTION_ALIASES["language"]),
+    }
+    for action, candidates in candidates_map.items():
+        normalized_candidates = {
+            _normalize_arisa_action_text(candidate)
+            for candidate in candidates
+            if candidate
+        }
+        if token in normalized_candidates:
+            return action
+    return None
+
+
 def _get_arisa_menu_labels(lang: str | None) -> dict[str, str]:
     lang_code = normalize_lang(lang)
     return {
@@ -1838,6 +1880,32 @@ async def prompt_status(message: Message, *, now: datetime) -> None:
     )
 
 
+async def prompt_arisa_charge_menu(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "charge")
+    mark_user_active(user_id)
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "CHARGE_MODE_PROMPT"), reply_markup=build_arisa_menu(user_id))
+    await send_store_menu(message)
+
+
+async def prompt_arisa_status(message: Message, *, now: datetime) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    set_user_mode(user_id, "status")
+    mark_user_active(user_id, now=now)
+    lang = get_user_lang_or_default(user_id)
+    if user_id is None:
+        await message.answer(
+            t(lang, "USER_INFO_DM_REQUIRED"),
+            reply_markup=build_arisa_menu(user_id),
+        )
+        return
+    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
+    await message.answer(
+        format_status(user, now=now, lang=lang), reply_markup=build_arisa_menu(user_id)
+    )
+
+
 COMMAND_SPREAD_MAP: dict[str, Spread] = {
     "/love1": ONE_CARD,
     "/read1": ONE_CARD,
@@ -2079,8 +2147,30 @@ def get_arisa_start_text(lang: str | None = "ja") -> str:
     return t(lang_code, "ARISA_START_TEXT")
 
 
+def _get_arisa_prompt_variants(prompt_key: str, lang: str | None) -> list[str]:
+    lang_code = normalize_lang(lang)
+    variants = t(lang_code, prompt_key)
+    if isinstance(variants, (list, tuple)) and variants:
+        return [str(item) for item in variants if str(item).strip()]
+    if isinstance(variants, str) and variants.strip():
+        return [variants]
+    return []
+
+
+def get_arisa_prompt(prompt_key: str, fallback_key: str, lang: str | None = "ja") -> str:
+    variants = _get_arisa_prompt_variants(prompt_key, lang)
+    if not variants:
+        fallback = t(normalize_lang(lang), fallback_key)
+        return fallback if isinstance(fallback, str) else ""
+    return random.choice(variants)
+
+
 def get_store_intro_text(lang: str | None = "ja") -> str:
     lang_code = normalize_lang(lang)
+    if BOT_MODE == "arisa":
+        arisa_text = t(lang_code, "ARISA_STORE_INTRO_TEXT")
+        if arisa_text != "ARISA_STORE_INTRO_TEXT":
+            return arisa_text
     return t(lang_code, "STORE_INTRO_TEXT")
 
 
@@ -2490,10 +2580,20 @@ def build_terms_prompt_keyboard(lang: str | None = "ja") -> InlineKeyboardMarkup
 
 
 def _get_product_title(product: Product, lang: str) -> str:
+    if BOT_MODE == "arisa":
+        arisa_key = f"ARISA_PRODUCT_{product.sku}_TITLE"
+        arisa_title = t(lang, arisa_key)
+        if arisa_title != arisa_key:
+            return arisa_title
     return t(lang, f"PRODUCT_{product.sku}_TITLE")
 
 
 def _get_product_description(product: Product, lang: str) -> str:
+    if BOT_MODE == "arisa":
+        arisa_key = f"ARISA_PRODUCT_{product.sku}_DESCRIPTION"
+        arisa_description = t(lang, arisa_key)
+        if arisa_description != arisa_key:
+            return arisa_description
     return t(lang, f"PRODUCT_{product.sku}_DESCRIPTION")
 
 
@@ -3944,18 +4044,17 @@ async def arisa_cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
 async def arisa_cmd_store(message: Message) -> None:
     if not _should_process_message(message, handler="arisa_store"):
         return
-    user_id = message.from_user.id if message.from_user else None
-    lang = get_user_lang_or_default(user_id)
-    await message.answer(t(lang, "ARISA_CHARGE_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    await prompt_arisa_charge_menu(message)
 
 
 @arisa_router.message(Command("status"))
 async def arisa_cmd_status(message: Message) -> None:
     if not _should_process_message(message, handler="arisa_status"):
         return
-    user_id = message.from_user.id if message.from_user else None
-    lang = get_user_lang_or_default(user_id)
-    await message.answer(t(lang, "ARISA_STATUS_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+    reset_state_for_explicit_command(message.from_user.id if message.from_user else None)
+    now = utcnow()
+    await prompt_arisa_status(message, now=now)
 
 
 @arisa_router.callback_query(F.data.startswith("lang:set:"))
@@ -4009,20 +4108,29 @@ async def arisa_text(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     lang = get_user_lang_or_default(user_id)
     text = message.text or ""
-    menu_labels = _get_arisa_menu_labels(lang)
-    normalized = _normalize_menu_text(text)
+    action = _resolve_arisa_menu_action(text, lang)
 
-    if normalized == _normalize_menu_text(menu_labels["love"]):
-        await message.answer(t(lang, "ARISA_LOVE_PROMPT"), reply_markup=build_arisa_menu(user_id))
+    if action == "love":
+        await message.answer(
+            get_arisa_prompt("ARISA_LOVE_PROMPTS", "ARISA_LOVE_PROMPT", lang=lang),
+            reply_markup=build_arisa_menu(user_id),
+        )
         return
-    if normalized == _normalize_menu_text(menu_labels["sexy"]):
-        await message.answer(t(lang, "ARISA_SEXY_PROMPT"), reply_markup=build_arisa_menu(user_id))
+    if action == "sexy":
+        await message.answer(
+            get_arisa_prompt("ARISA_SEXY_PROMPTS", "ARISA_SEXY_PROMPT", lang=lang),
+            reply_markup=build_arisa_menu(user_id),
+        )
         return
-    if normalized == _normalize_menu_text(menu_labels["charge"]):
-        await message.answer(t(lang, "ARISA_CHARGE_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+    if action == "store":
+        await prompt_arisa_charge_menu(message)
         return
-    if normalized == _normalize_menu_text(menu_labels["status"]):
-        await message.answer(t(lang, "ARISA_STATUS_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+    if action == "status":
+        now = utcnow()
+        await prompt_arisa_status(message, now=now)
+        return
+    if action == "language":
+        await arisa_cmd_lang(message, skip_dedup=True)
         return
     is_language_button, _ = is_language_reply_button(text)
     if is_language_button:

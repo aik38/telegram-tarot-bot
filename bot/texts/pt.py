@@ -25,21 +25,40 @@ TEXTS = {
         "Veja /help para as instruções.\n"
     ),
     "ARISA_START_TEXT": (
-        "Oi, eu sou a Arisa.\n"
-        "Fale sobre amor, temas sensuais ou bate-papo à vontade.\n"
-        "NG: menores, descrições sexuais explícitas ou atividade ilegal.\n"
-        "Conte como você está se sentindo."
+        "Oi, eu sou a Arisa. 💕\n"
+        "Podemos falar de amor com frio na barriga ou de um papo mais adulto—sempre com segurança.\n"
+        "Tem um sentimento secreto? Pode desabafar por aqui. 🥰\n"
+        "※ NG: menores / descrições sexuais explícitas / atividades ilegais\n"
+        "Me conta como você está se sentindo agora."
     ),
     "ARISA_MENU_LOVE_LABEL": "💖 Amor",
     "ARISA_MENU_SEXY_LABEL": "🔥 Sexy",
-    "ARISA_LOVE_PROMPT": "Vamos falar de amor. Conte sobre a pessoa ou situação que está na sua cabeça.",
-    "ARISA_SEXY_PROMPT": "Tema sexy anotado. Compartilhe só o que for confortável.",
+    "ARISA_LOVE_PROMPT": (
+        "Vamos ligar o modo amor. 💖 Tem alguém na sua cabeça? Conta a situação em uma linha."
+    ),
+    "ARISA_SEXY_PROMPT": (
+        "Um segredo só nosso… 🔥 Compartilhe apenas o que for confortável — que tipo de clima você quer?"
+    ),
+    "ARISA_LOVE_PROMPTS": [
+        "Vamos ligar o modo amor. 💖 Tem alguém na sua cabeça? Conta a situação em uma linha.",
+        "Você está radiante ou mais melancólica(o)? 💗 Deixa eu ouvir esse sentimento de perto.",
+        "Hoje é dia de avançar no amor? 💞 A distância entre vocês está em quantos por cento?",
+    ],
+    "ARISA_SEXY_PROMPTS": [
+        "Um segredo só nosso… 🔥 Compartilhe apenas o que for confortável — que tipo de clima você quer?",
+        "Que tal um clima mais adulto? 🥀 Você quer carinho, um frio na barriga ou mais calma?",
+        "Você curte essa aproximação pelas palavras? ✨ Se estiver com vergonha, pode falar de forma indireta.",
+    ],
     "ARISA_CHARGE_BLOCKED_TEXT": "Recargas não estão disponíveis neste modo. Aqui é só conversa.",
     "ARISA_STATUS_BLOCKED_TEXT": "Status não está disponível neste modo.",
     "ARISA_BLOCK_NOTICE": "Tarô e pagamentos estão desativados neste bot. Só conversa.",
     "STORE_INTRO_TEXT": (
         "Depois da compra, você pode voltar para “🎩 Tarot” ou “💬 Conversa”.\n"
         "As Stars ficam na sua conta e o saldo continua disponível.\n"
+    ),
+    "ARISA_STORE_INTRO_TEXT": (
+        "Após a compra, você volta direto para o papo de amor ou conversa casual.\n"
+        "As Stars ficam na sua conta e o saldo restante pode ser usado depois.\n"
     ),
     "HELP_TEXT_TEMPLATE": (
         "❓ Como usar\n"
@@ -120,6 +139,18 @@ TEXTS = {
     "STATUS_IMAGES_OFF": "desativada",
     "STATUS_RESET": "• Próximo reset dos limites gratuitos: {reset_time}",
     "STATUS_LATEST_PURCHASE": "• Compra recente: {label} / SKU: {sku} (crédito: {purchased_at})",
+    "ARISA_PRODUCT_PASS_7D_TITLE": "Passe de 7 dias (Amor)",
+    "ARISA_PRODUCT_PASS_7D_DESCRIPTION": "Passe de 7 dias para manter conversas de amor e papo adulto com leveza.",
+    "ARISA_PRODUCT_PASS_30D_TITLE": "Passe de 30 dias (Papo profundo)",
+    "ARISA_PRODUCT_PASS_30D_DESCRIPTION": "Passe de 30 dias para conversas contínuas e sem pressa.",
+    "ARISA_PRODUCT_TICKET_3_TITLE": "Ticket de mergulho leve",
+    "ARISA_PRODUCT_TICKET_3_DESCRIPTION": "Um ticket para aprofundar o assunto de forma rápida e suave.",
+    "ARISA_PRODUCT_TICKET_7_TITLE": "Ticket de mergulho focado",
+    "ARISA_PRODUCT_TICKET_7_DESCRIPTION": "Um ticket para organizar melhor a situação e conversar com calma.",
+    "ARISA_PRODUCT_TICKET_10_TITLE": "Ticket de conversa lenta",
+    "ARISA_PRODUCT_TICKET_10_DESCRIPTION": "Um ticket especial para conversar no seu ritmo.",
+    "ARISA_PRODUCT_ADDON_IMAGES_TITLE": "Adicional de imagens",
+    "ARISA_PRODUCT_ADDON_IMAGES_DESCRIPTION": "Ativa um toque visual que combina com o clima da conversa.",
     "NON_CONSULT_OUT_OF_QUOTA_MESSAGE": (
         "Este bot é para leituras de tarô e conversa. Use /read1 para leituras ou /love1 para temas de amor. "
         "Recarregue via /buy."
