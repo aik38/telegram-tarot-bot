@@ -1,0 +1,4 @@
+JP: ここからArisaのキャラクターモジュール境界
+EN: Arisa character module boundary starts here
+JP: ここまでArisaのキャラクターモジュール境界
+EN: Arisa character module boundary ends here

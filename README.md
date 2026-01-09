@@ -1,6 +1,6 @@
-# Telegram Tarot Bot
+# Telegram Generic Chat Bot
 
-Telegram向けタロット占いボットのミニマルな開発用セットアップです。このREADMEは入口ガイドで、進行状況やタスクの最新情報は `docs/WBS.md`（唯一のWBS）を参照してください。スナップショットは `docs/WBS_PROGRESS.md` に残しています。
+Telegram向けに再利用可能な汎用チャットボットプラットフォームです。キャラクターモジュールを差し替え可能な構成で、このREADMEは入口ガイドとして進行状況やタスクの最新情報は `docs/WBS.md`（唯一のWBS）を参照してください。スナップショットは `docs/WBS_PROGRESS.md` に残しています。
 価格設計やローンチ前チェックリストは `docs/pricing_notes.md` と `docs/launch_checklist.md`（MVP向け48hチェックリスト、冒頭に30〜60分のショートラン手順あり）を参照してください。運用時の SQLite バックアップ/リストア手順は `docs/sqlite_backup.md` にまとめています。
 
 ## 最初にやること（30〜60分ショートラン）
