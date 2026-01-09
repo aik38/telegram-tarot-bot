@@ -19,7 +19,7 @@ dotenv_path = Path(
 )
 load_dotenv(dotenv_path, override=False)
 
-from aiogram import BaseMiddleware, Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -96,6 +96,7 @@ from core.monetization import (
 )
 from core.logging import request_id_var, setup_logging
 from core.prompts import (
+    get_character_boundary_lines,
     get_consult_system_prompt,
     get_tarot_fixed_output_format,
     get_tarot_output_rules,
@@ -121,9 +122,13 @@ from core.store.catalog import Product, get_product, iter_products
 from bot.texts.ja import HELP_TEXT_TEMPLATE
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
+tarot_router = Router()
+arisa_router = Router()
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logger = logging.getLogger(__name__)
+CHARACTER = os.getenv("CHARACTER", "").strip().lower()
+BOT_MODE = "arisa" if CHARACTER == "arisa" else "default"
 dp.message.middleware(ThrottleMiddleware(min_interval_sec=THROTTLE_MESSAGE_INTERVAL_SEC))
 # Callback queries are lightly throttled to absorb rapid taps without dropping the bot.
 dp.callback_query.middleware(
@@ -215,6 +220,35 @@ TAROT_THEME_EXAMPLES: dict[str, tuple[str, ...]] = {
         "金銭面は安定する？",
     ),
 }
+ARISA_BLOCKED_COMMANDS = {
+    "read1",
+    "love1",
+    "buy",
+    "status",
+    "lang",
+    "help",
+    "terms",
+    "support",
+    "paysupport",
+    "refund",
+    "admin",
+}
+ARISA_TAROT_KEYWORDS = (
+    "占い",
+    "タロット",
+    "チャージ",
+    "課金",
+    "決済",
+    "購入",
+    "買う",
+    "read1",
+    "love1",
+    "tarot",
+    "charge",
+    "status",
+    "buy",
+    "payment",
+)
 TAROT_THEME_LABELS_EN: dict[str, str] = {
     "love": "Love",
     "marriage": "Marriage",
@@ -1268,6 +1302,26 @@ def build_general_chat_messages(user_query: str, *, lang: str | None = "ja") -> 
     """通常チャットモードの system prompt を組み立てる。"""
     return [
         {"role": "system", "content": get_consult_system_prompt(lang)},
+        {"role": "user", "content": user_query},
+    ]
+
+
+def build_arisa_messages(user_query: str, *, lang: str | None = "ja") -> list[dict[str, str]]:
+    """Arisaモードの system prompt を組み立てる。"""
+    lang_code = normalize_lang(lang)
+    system_prompt = get_consult_system_prompt(lang_code)
+    boundary_lines = get_character_boundary_lines()
+    internal_flags = (
+        'MODE: "FREE"\n'
+        'FIRST_PAID_TURN: "false"\n'
+        f'LANG: "{lang_code}"'
+    )
+    parts = [system_prompt]
+    if boundary_lines:
+        parts.append(boundary_lines.strip())
+    parts.append(internal_flags)
+    return [
+        {"role": "system", "content": "\n\n".join(parts)},
         {"role": "user", "content": user_query},
     ]
 
@@ -2454,7 +2508,7 @@ async def send_store_menu(message: Message) -> None:
     )
 
 
-@dp.message(Command("help"))
+@tarot_router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     if not _should_process_message(message, handler="help"):
         return
@@ -2466,7 +2520,7 @@ async def cmd_help(message: Message) -> None:
     await message.answer(build_help_text(lang=lang), reply_markup=build_quick_menu(user_id))
 
 
-@dp.message(Command("terms"))
+@tarot_router.message(Command("terms"))
 async def cmd_terms(message: Message) -> None:
     if not _should_process_message(message, handler="terms"):
         return
@@ -2491,7 +2545,7 @@ async def cmd_terms(message: Message) -> None:
     await message.answer(t(lang, "TERMS_NEXT_STEP_REMINDER"), reply_markup=build_quick_menu(user_id))
 
 
-@dp.callback_query(F.data == TERMS_CALLBACK_SHOW)
+@tarot_router.callback_query(F.data == TERMS_CALLBACK_SHOW)
 async def handle_terms_show(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     lang = get_user_lang_or_default(query.from_user.id if query.from_user else None)
@@ -2502,7 +2556,7 @@ async def handle_terms_show(query: CallbackQuery):
         )
 
 
-@dp.callback_query(F.data == TERMS_CALLBACK_AGREE)
+@tarot_router.callback_query(F.data == TERMS_CALLBACK_AGREE)
 async def handle_terms_agree(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
@@ -2520,7 +2574,7 @@ async def handle_terms_agree(query: CallbackQuery):
         )
 
 
-@dp.callback_query(F.data == TERMS_CALLBACK_AGREE_AND_BUY)
+@tarot_router.callback_query(F.data == TERMS_CALLBACK_AGREE_AND_BUY)
 async def handle_terms_agree_and_buy(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
@@ -2541,7 +2595,7 @@ async def handle_terms_agree_and_buy(query: CallbackQuery):
         )
 
 
-@dp.message(Command("support"))
+@tarot_router.message(Command("support"))
 async def cmd_support(message: Message) -> None:
     if not _should_process_message(message, handler="support"):
         return
@@ -2555,7 +2609,7 @@ async def cmd_support(message: Message) -> None:
     )
 
 
-@dp.message(Command("paysupport"))
+@tarot_router.message(Command("paysupport"))
 async def cmd_pay_support(message: Message) -> None:
     if not _should_process_message(message, handler="paysupport"):
         return
@@ -2566,7 +2620,7 @@ async def cmd_pay_support(message: Message) -> None:
     await message.answer(get_pay_support_text(lang=lang))
 
 
-@dp.message(Command("buy"))
+@tarot_router.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
     if not _should_process_message(message, handler="buy"):
         return
@@ -2588,7 +2642,7 @@ async def cmd_buy(message: Message) -> None:
     await prompt_charge_menu(message)
 
 
-@dp.message(Command("status"))
+@tarot_router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
     if not _should_process_message(message, handler="status"):
         return
@@ -2599,7 +2653,7 @@ async def cmd_status(message: Message) -> None:
     await prompt_status(message, now=now)
 
 
-@dp.message(Command("feedback"))
+@tarot_router.message(Command("feedback"))
 async def cmd_feedback(message: Message) -> None:
     if not _should_process_message(message, handler="feedback"):
         return
@@ -2648,7 +2702,7 @@ async def cmd_feedback(message: Message) -> None:
     )
 
 
-@dp.message(Command("read1"))
+@tarot_router.message(Command("read1"))
 async def cmd_read1(message: Message) -> None:
     if not _should_process_message(message, handler="read1"):
         return
@@ -2658,7 +2712,7 @@ async def cmd_read1(message: Message) -> None:
     await prompt_tarot_mode(message)
 
 
-@dp.message(Command("love1"))
+@tarot_router.message(Command("love1"))
 async def cmd_love1(message: Message) -> None:
     if not _should_process_message(message, handler="love1"):
         return
@@ -2675,7 +2729,7 @@ async def cmd_love1(message: Message) -> None:
     )
 
 
-@dp.message(CommandStart())
+@tarot_router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     if not _should_process_message(message, handler="start"):
         return
@@ -2697,7 +2751,7 @@ async def cmd_start(message: Message) -> None:
     await message.answer(get_start_text(lang=lang), reply_markup=base_menu_kb(lang=lang))
 
 
-@dp.message(Command("lang"))
+@tarot_router.message(Command("lang"))
 async def cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
     if not skip_dedup and not _should_process_message(message, handler="lang"):
         return
@@ -2723,7 +2777,7 @@ async def cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
     )
 
 
-@dp.callback_query(F.data == "nav:menu")
+@tarot_router.callback_query(F.data == "nav:menu")
 async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
@@ -2738,7 +2792,7 @@ async def handle_nav_menu(query: CallbackQuery, state: FSMContext) -> None:
         )
 
 
-@dp.callback_query(F.data.startswith("lang:set:"))
+@tarot_router.callback_query(F.data.startswith("lang:set:"))
 async def handle_lang_set(query: CallbackQuery) -> None:
     await _safe_answer_callback(query, cache_time=1)
     data = query.data or ""
@@ -2772,7 +2826,7 @@ async def handle_lang_set(query: CallbackQuery) -> None:
         await bot.send_message(user_id, start_text, reply_markup=reply_markup)
 
 
-@dp.callback_query(F.data == "nav:status")
+@tarot_router.callback_query(F.data == "nav:status")
 async def handle_nav_status(query: CallbackQuery, state: FSMContext) -> None:
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
@@ -2792,7 +2846,7 @@ async def handle_nav_status(query: CallbackQuery, state: FSMContext) -> None:
         await bot.send_message(user_id, formatted, reply_markup=build_base_menu(user_id))
 
 
-@dp.callback_query(F.data == "nav:charge")
+@tarot_router.callback_query(F.data == "nav:charge")
 async def handle_nav_charge(query: CallbackQuery, state: FSMContext) -> None:
     await _safe_answer_callback(query, cache_time=1)
     user_id = query.from_user.id if query.from_user else None
@@ -2815,7 +2869,7 @@ async def handle_nav_charge(query: CallbackQuery, state: FSMContext) -> None:
         )
 
 
-@dp.callback_query(F.data.startswith("buy:"))
+@tarot_router.callback_query(F.data.startswith("buy:"))
 async def handle_buy_callback(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     data = query.data or ""
@@ -2919,14 +2973,14 @@ async def handle_buy_callback(query: CallbackQuery):
     await _safe_answer_callback(query, t(lang, "OPENING_PAYMENT_SCREEN"))
 
 
-@dp.callback_query(F.data == "addon:pending")
+@tarot_router.callback_query(F.data == "addon:pending")
 async def handle_addon_pending(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     lang = get_user_lang_or_default(query.from_user.id if query.from_user else None)
     await _safe_answer_callback(query, t(lang, "ADDON_PENDING_ALERT"), show_alert=True)
 
 
-@dp.callback_query(F.data.startswith("tarot_theme:"))
+@tarot_router.callback_query(F.data.startswith("tarot_theme:"))
 async def handle_tarot_theme_select(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     data = query.data or ""
@@ -2950,7 +3004,7 @@ async def handle_tarot_theme_select(query: CallbackQuery):
         await bot.send_message(user_id, build_tarot_question_prompt(theme, lang=lang))
 
 
-@dp.callback_query(F.data == "upgrade_to_three")
+@tarot_router.callback_query(F.data == "upgrade_to_three")
 async def handle_upgrade_to_three(query: CallbackQuery):
     await _safe_answer_callback(query, cache_time=1)
     if query.message:
@@ -2962,7 +3016,7 @@ async def handle_upgrade_to_three(query: CallbackQuery):
         )
 
 
-@dp.pre_checkout_query()
+@tarot_router.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     sku, payload_user_id = _parse_invoice_payload(pre_checkout_query.invoice_payload or "")
     product = get_product(sku) if sku else None
@@ -3010,7 +3064,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     await _safe_answer_pre_checkout(pre_checkout_query, ok=True)
 
 
-@dp.message(F.successful_payment)
+@tarot_router.message(F.successful_payment)
 async def process_successful_payment(message: Message):
     payment = message.successful_payment
     sku, payload_user_id = _parse_invoice_payload(payment.invoice_payload or "")
@@ -3102,7 +3156,7 @@ def _build_admin_revoke_summary(user: UserRecord, product: Product, now: datetim
     return "\n".join(lines)
 
 
-@dp.message(Command("admin"))
+@tarot_router.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not _should_process_message(message, handler="admin"):
         return
@@ -3296,7 +3350,7 @@ async def cmd_admin(message: Message) -> None:
     await message.answer(summary)
 
 
-@dp.message(Command("refund"))
+@tarot_router.message(Command("refund"))
 async def cmd_refund(message: Message) -> None:
     if not _should_process_message(message, handler="refund"):
         return
@@ -3731,8 +3785,103 @@ async def handle_general_chat(message: Message, user_query: str) -> None:
         release_inflight()
 
 
+def _is_arisa_tarot_trigger(text: str) -> bool:
+    lowered = text.strip().lower()
+    return any(keyword in lowered for keyword in ARISA_TAROT_KEYWORDS)
+
+
+def _arisa_block_notice() -> str:
+    return "このBotでは占い/課金は無効です。会話だけ対応しています。"
+
+
+async def handle_arisa_chat(message: Message, user_query: str) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    total_start = perf_counter()
+    openai_latency_ms: float | None = None
+
+    logger.info(
+        "Handling Arisa message",
+        extra={
+            "mode": "arisa",
+            "user_id": user_id,
+            "text_preview": _preview_text(user_query),
+        },
+    )
+
+    release_inflight = await _acquire_inflight(
+        user_id, message, busy_message="少し待ってね。すぐ返すよ。", lang=lang
+    )
+
+    try:
+        openai_start = perf_counter()
+        try:
+            answer, fatal = await call_openai_with_retry(
+                build_arisa_messages(user_query, lang=lang), lang=lang
+            )
+        except TypeError:
+            answer, fatal = await call_openai_with_retry(build_arisa_messages(user_query), lang=lang)
+        openai_latency_ms = (perf_counter() - openai_start) * 1000
+        if fatal:
+            await message.answer(
+                "ごめんね、今うまく返せないみたい。少し待ってもう一度送って。",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        await message.answer(answer, reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        logger.exception("Unexpected error during Arisa chat")
+        await message.answer(
+            "すみません、今ちょっと調子が悪いみたいです…\n少し時間をおいてから、もう一度話しかけてください。",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    finally:
+        total_ms = (perf_counter() - total_start) * 1000
+        logger.info(
+            "Arisa handler finished",
+            extra={
+                "mode": "arisa",
+                "user_id": user_id,
+                "message_id": getattr(message, "message_id", None),
+                "openai_latency_ms": round(openai_latency_ms or 0, 2),
+                "total_handler_ms": round(total_ms, 2),
+            },
+        )
+        release_inflight()
+
+
+@arisa_router.message(CommandStart())
+async def arisa_start(message: Message) -> None:
+    text = (
+        "こんにちは、アリサ。\n"
+        "ここは会話だけのBotだよ。恋愛/孤独/雑談/相談、なんでも話して。\n"
+        "NG: 未成年・露骨な性描写・違法行為。\n"
+        "今の気持ち、教えて。"
+    )
+    await message.answer(text, reply_markup=ReplyKeyboardRemove())
+
+
+@arisa_router.message(Command(commands=sorted(ARISA_BLOCKED_COMMANDS)))
+async def arisa_blocked_command(message: Message) -> None:
+    await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+
+
+@arisa_router.message(Command())
+async def arisa_other_command(message: Message) -> None:
+    await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+
+
+@arisa_router.message(F.text)
+async def arisa_text(message: Message) -> None:
+    text = message.text or ""
+    if _is_arisa_tarot_trigger(text):
+        await message.answer(_arisa_block_notice(), reply_markup=ReplyKeyboardRemove())
+        return
+    await handle_arisa_chat(message, user_query=text)
+
+
 # Catch-all handler for non-command text messages
-@dp.message(
+@tarot_router.message(
     ~Command(
         commands=[
             "terms",
@@ -3894,6 +4043,19 @@ async def main() -> None:
             "admin_ids_count": len(ADMIN_USER_IDS),
             "paywall_enabled": PAYWALL_ENABLED,
             "polling": True,
+        },
+    )
+    if BOT_MODE == "arisa":
+        dp.include_router(arisa_router)
+    else:
+        dp.include_router(tarot_router)
+    me = await bot.get_me()
+    logger.info(
+        "Bot startup info",
+        extra={
+            "mode": "startup",
+            "bot_mode": BOT_MODE,
+            "bot_username": getattr(me, "username", None),
         },
     )
     await dp.start_polling(bot)
