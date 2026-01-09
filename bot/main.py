@@ -224,13 +224,19 @@ ARISA_BLOCKED_COMMANDS = {
     "read1",
     "love1",
     "buy",
-    "status",
-    "help",
     "terms",
     "support",
     "paysupport",
     "refund",
     "admin",
+}
+ARISA_ALLOWED_COMMANDS = {
+    "/start",
+    "/help",
+    "/language",
+    "/lang",
+    "/status",
+    "/store",
 }
 ARISA_TAROT_KEYWORDS = (
     "占い",
@@ -3821,6 +3827,23 @@ def _arisa_block_notice(lang: str | None = "ja") -> str:
     return t(lang_code, "ARISA_BLOCK_NOTICE")
 
 
+def _extract_command_token(text: str | None) -> str | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return None
+    token = stripped.split(maxsplit=1)[0]
+    if "@" in token:
+        token = token.split("@", maxsplit=1)[0]
+    return token.lower()
+
+
+def _is_arisa_blockable_command(text: str | None) -> bool:
+    token = _extract_command_token(text)
+    return token is not None and token not in ARISA_ALLOWED_COMMANDS
+
+
 async def handle_arisa_chat(message: Message, user_query: str) -> None:
     user_id = message.from_user.id if message.from_user else None
     lang = get_user_lang_or_default(user_id)
@@ -3890,7 +3913,19 @@ async def arisa_start(message: Message) -> None:
     await message.answer(start_text, reply_markup=build_arisa_menu(user_id))
 
 
-@arisa_router.message(Command("lang"))
+@arisa_router.message(Command("help"))
+async def arisa_help(message: Message) -> None:
+    if not _should_process_message(message, handler="arisa_help"):
+        return
+
+    user_id = message.from_user.id if message.from_user else None
+    reset_state_for_explicit_command(user_id)
+    mark_user_active(user_id)
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(build_help_text(lang=lang), reply_markup=build_arisa_menu(user_id))
+
+
+@arisa_router.message(Command("lang", "language"))
 async def arisa_cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
     if not skip_dedup and not _should_process_message(message, handler="lang"):
         return
@@ -3903,6 +3938,24 @@ async def arisa_cmd_lang(message: Message, *, skip_dedup: bool = False) -> None:
         t(lang, "LANGUAGE_SELECT_PROMPT"),
         reply_markup=build_lang_keyboard(lang=lang),
     )
+
+
+@arisa_router.message(Command("store"))
+async def arisa_cmd_store(message: Message) -> None:
+    if not _should_process_message(message, handler="arisa_store"):
+        return
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "ARISA_CHARGE_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
+
+
+@arisa_router.message(Command("status"))
+async def arisa_cmd_status(message: Message) -> None:
+    if not _should_process_message(message, handler="arisa_status"):
+        return
+    user_id = message.from_user.id if message.from_user else None
+    lang = get_user_lang_or_default(user_id)
+    await message.answer(t(lang, "ARISA_STATUS_BLOCKED_TEXT"), reply_markup=build_arisa_menu(user_id))
 
 
 @arisa_router.callback_query(F.data.startswith("lang:set:"))
@@ -3944,7 +3997,7 @@ async def arisa_blocked_command(message: Message) -> None:
     await message.answer(_arisa_block_notice(lang), reply_markup=build_arisa_menu(user_id))
 
 
-@arisa_router.message(F.text.startswith("/"))
+@arisa_router.message(F.text.func(_is_arisa_blockable_command))
 async def arisa_other_command(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     lang = get_user_lang_or_default(user_id)
@@ -4167,4 +4220,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

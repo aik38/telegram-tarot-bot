@@ -60,6 +60,20 @@ powershell -ExecutionPolicy Bypass -File scripts/run_default.ps1
    4. 「🛒チャージ」「📊ステータス」をタップし、Arisa モードでは利用できない旨の案内が返ることを確認。
    5. 「🌐 言語設定」をタップし、3言語の選択肢が表示されることを確認。
 
+### Arisa コマンド制御の更新（概要）
+
+- Arisa モードで未許可コマンド（例: `/read1` `/buy`）を安全にブロックし、ValueError を起こし得る `Command()`（引数なし）を排除。
+- Arisa の `/start` `/help` `/lang` `/language` `/status` `/store` は専用ハンドラで処理し、既存の default / LINE の挙動は変更しない。
+
+### Arisa コマンド制御の手動確認
+
+1. `.env.arisa` を用意して `scripts/run_arisa.ps1` を実行。
+2. Telegram で `/start` を送信し、Arisa メニューが出ることを確認。
+3. `/help` `/lang` `/language` がそれぞれ案内/言語選択を返すことを確認。
+4. `/status` `/store` で Arisa のブロック案内が返ることを確認。
+5. `/read1` `/buy` など未許可コマンドがブロック文言で返ることを確認。
+6. `scripts/run_default.ps1` で起動し、default の `/start` `/read1` が従来通り動作することを確認。
+
 ### 主な環境変数
 
 - `.env.example` を `.env` にコピーして値を埋めてください。
