@@ -28,6 +28,7 @@ PowerShell で **1コマンド** で Bot（aiogram）を起動する手順です
 ### Arisa を動かす
 
 1. リポジトリ直下に `.env.arisa` を作成し、`TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `SQLITE_DB_PATH`, `CHARACTER=arisa`, `PAYWALL_ENABLED` など必要な環境変数を設定します。
+   - QA用に管理者テストをする場合は `.env.arisa` に `ADMIN_USER_IDS=123456789,987654321` のようにカンマ区切りで Telegram のユーザーIDを指定します。
 2. PowerShell で以下を実行します。
 
 ```powershell

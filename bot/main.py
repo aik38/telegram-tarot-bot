@@ -1990,7 +1990,8 @@ async def prompt_arisa_status(message: Message, *, now: datetime) -> None:
         )
         return
     ensure_arisa_trial(user_id, now=now)
-    user = get_user_with_default(user_id) or ensure_user(user_id, now=now)
+    admin_user = ensure_arisa_admin_pass(user_id, now=now)
+    user = admin_user or get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
     await message.answer(
         format_arisa_status(user, now=now, lang=lang),
         reply_markup=build_arisa_menu(user_id),
@@ -2266,10 +2267,16 @@ def get_store_intro_text(lang: str | None = "ja") -> str:
 
 
 def _arisa_pass_label(
-    user: UserRecord, *, now: datetime, lang: str | None = "ja"
+    user: UserRecord,
+    *,
+    now: datetime,
+    lang: str | None = "ja",
+    is_admin: bool = False,
 ) -> str:
     if not user.arisa_pass_until:
         return t(lang, "ARISA_STATUS_PASS_NONE")
+    if is_admin:
+        return t(lang, "ARISA_STATUS_PASS_TESTER")
     pass_until = user.arisa_pass_until.astimezone(USAGE_TIMEZONE).strftime(
         "%Y-%m-%d %H:%M JST"
     )
@@ -2299,6 +2306,8 @@ def is_arisa_paid_user(
     user_id: int, *, user: UserRecord | None = None, now: datetime | None = None
 ) -> bool:
     now = now or utcnow()
+    if is_admin_user(user_id):
+        return True
     if user is None:
         user = get_user_with_default(user_id, now=now)
     if user and user.arisa_pass_until and user.arisa_pass_until > now:
@@ -2319,6 +2328,25 @@ def ensure_arisa_trial(user_id: int, *, now: datetime | None = None) -> None:
         event_type="arisa_trial_granted",
         user_id=user_id,
         payload=json.dumps({"credits": TRIAL_FREE_CREDITS}),
+    )
+
+
+def ensure_arisa_admin_pass(
+    user_id: int, *, now: datetime | None = None
+) -> UserRecord | None:
+    if not is_admin_user(user_id):
+        return None
+    now = now or utcnow()
+    user = get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
+    pass_active = bool(user.arisa_pass_until and user.arisa_pass_until > now)
+    pass_matches = pass_active and user.arisa_pass_daily_limit == PASS_30D_DAILY_LIMIT
+    if pass_matches:
+        return user
+    return update_arisa_pass(
+        user_id,
+        pass_until=now + timedelta(days=30),
+        daily_limit=PASS_30D_DAILY_LIMIT,
+        now=now,
     )
 
 
@@ -2376,6 +2404,7 @@ def format_arisa_status(
 ) -> str:
     now = now or utcnow()
     lang_code = normalize_lang(lang)
+    admin_mode = is_admin_user(user.user_id)
     pass_active = bool(user.arisa_pass_until and user.arisa_pass_until > now)
     remaining_today = _arisa_pass_remaining(user, now=now) if pass_active else 0
     paid_user = is_arisa_paid_user(user.user_id, user=user, now=now)
@@ -2392,7 +2421,9 @@ def format_arisa_status(
             t(
                 lang_code,
                 "ARISA_STATUS_PASS_ACTIVE",
-                pass_label=_arisa_pass_label(user, now=now, lang=lang_code),
+                pass_label=_arisa_pass_label(
+                    user, now=now, lang=lang_code, is_admin=admin_mode
+                ),
                 remaining=remaining_today,
             )
         )
@@ -4265,7 +4296,8 @@ async def handle_arisa_chat(message: Message, user_query: str) -> None:
     try:
         ensure_user(user_id, now=now)
         ensure_arisa_trial(user_id, now=now)
-        user = get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
+        admin_user = ensure_arisa_admin_pass(user_id, now=now)
+        user = admin_user or get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
     except Exception:
         logger.exception("Failed to load Arisa user")
         await message.answer(
@@ -4453,7 +4485,8 @@ async def arisa_handle_nav_status(query: CallbackQuery, state: FSMContext) -> No
     set_user_mode(user_id, "status")
     mark_user_active(user_id, now=now)
     await state.clear()
-    user = get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
+    admin_user = ensure_arisa_admin_pass(user_id, now=now)
+    user = admin_user or get_user_with_default(user_id, now=now) or ensure_user(user_id, now=now)
     formatted = format_arisa_status(user, now=now, lang=get_user_lang_or_default(user_id))
     if query.message:
         await query.message.answer(formatted, reply_markup=build_arisa_menu(user_id))

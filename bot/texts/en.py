@@ -72,6 +72,7 @@ TEXTS = {
     "ARISA_STATUS_TRIAL_LINE": "• Trial: {trial} messages left",
     "ARISA_STATUS_PASS_ACTIVE": "• Pass: {pass_label} (remaining today: {remaining})",
     "ARISA_STATUS_PASS_NONE": "• Pass: none",
+    "ARISA_STATUS_PASS_TESTER": "30-day pass (tester)",
     "ARISA_STATUS_SEXY_UNLOCKED": "• Sexy: unlocked",
     "ARISA_STATUS_SEXY_LOCKED": "• Sexy: locked (unlocks after first purchase)",
     "ARISA_STATUS_NOTE_TOKENS": "Message counts are estimates and may vary with reply length.",
