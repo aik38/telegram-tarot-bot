@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+
+
 def _normalize_lang(lang: str | None) -> str:
     if not lang:
         return "ja"
@@ -7,6 +11,23 @@ def _normalize_lang(lang: str | None) -> str:
     if lowered.startswith("pt"):
         return "pt"
     return "ja"
+
+
+def _read_character_file(filename: str) -> str | None:
+    character = os.getenv("CHARACTER", "").strip()
+    if not character:
+        return None
+    if "/" in character or "\\" in character or character.startswith("."):
+        return None
+    repo_root = Path(__file__).resolve().parents[1]
+    candidate = repo_root / "characters" / character / filename
+    if not candidate.is_file():
+        return None
+    return candidate.read_text(encoding="utf-8")
+
+
+def get_character_boundary_lines() -> str | None:
+    return _read_character_file("boundary_lines.txt")
 
 
 CONSULT_SYSTEM_PROMPTS: dict[str, str] = {
@@ -294,6 +315,9 @@ TAROT_THEME_FOCUS_MAP: dict[str, dict[str, str]] = {
 
 def get_consult_system_prompt(lang: str | None = "ja") -> str:
     lang_code = _normalize_lang(lang)
+    character_prompt = _read_character_file("system_prompt.txt")
+    if character_prompt is not None:
+        return character_prompt
     return CONSULT_SYSTEM_PROMPTS.get(lang_code, CONSULT_SYSTEM_PROMPTS["ja"])
 
 
