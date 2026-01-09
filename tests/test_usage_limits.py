@@ -254,3 +254,28 @@ def test_status_shows_admin_mode(monkeypatch, tmp_path):
     status = bot_main.format_status(user, now=now)
 
     assert "管理者モード" in status
+
+
+def test_arisa_status_hides_trial_when_pass_active(monkeypatch, tmp_path):
+    bot_main = import_bot_main(monkeypatch, tmp_path)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    user_id = 4242
+    bot_main.ensure_user(user_id, now=now)
+    bot_main.set_arisa_trial_remaining(user_id, remaining=7, now=now)
+    bot_main.update_arisa_pass(
+        user_id,
+        pass_until=now + timedelta(days=7),
+        daily_limit=bot_main.PASS_7D_DAILY_LIMIT,
+        now=now,
+    )
+
+    user = bot_main.get_user(user_id, now=now)
+
+    assert user is not None
+    for lang in ("ja", "en", "pt"):
+        status = bot_main.format_arisa_status(user, now=now, lang=lang)
+        assert "初回無料" not in status
+        assert "テスト" not in status
+        lowered = status.lower()
+        assert "test" not in lowered
+        assert "tester" not in lowered
