@@ -2412,7 +2412,7 @@ def format_arisa_status(
         t(lang_code, "ARISA_STATUS_TITLE"),
         t(lang_code, "ARISA_STATUS_CREDITS_LINE", credits=user.arisa_credits),
     ]
-    if user.arisa_trial_remaining > 0:
+    if user.arisa_trial_remaining > 0 and not pass_active:
         lines.append(
             t(lang_code, "ARISA_STATUS_TRIAL_LINE", trial=user.arisa_trial_remaining)
         )
